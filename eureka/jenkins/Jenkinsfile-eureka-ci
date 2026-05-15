@@ -43,9 +43,9 @@ pipeline {
             steps {
                 script {
                     // Simple branch to environment mapping
-                    if (env.BUILD_BRANCH == 'main') {
+                    if (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') {
                         env.TARGET_ENV = 'prod'
-                        env.AUTO_DEPLOY = 'false'
+                        env.AUTO_DEPLOY = 'false'  // No auto-deploy for production
                     } else if (env.BUILD_BRANCH == 'qa') {
                         env.TARGET_ENV = 'qa'
                         env.AUTO_DEPLOY = 'true'
