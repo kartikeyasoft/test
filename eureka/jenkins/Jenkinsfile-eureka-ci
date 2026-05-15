@@ -23,13 +23,22 @@ pipeline {
     }
 
     stages {
+        stage('Checkout') {
+            steps {
+                // Checkout first to get branch info
+                checkout scm
+                script {
+                    // Get branch name after checkout
+                    env.BUILD_BRANCH = env.GIT_BRANCH ?: env.BRANCH_NAME ?: 'dev'
+                    env.BUILD_BRANCH = env.BUILD_BRANCH.replaceFirst('^refs/heads/', '')
+                    env.GIT_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+            }
+        }
+
         stage('Setup Branch') {
             steps {
                 script {
-                    // Get branch name from Jenkins
-                    env.BUILD_BRANCH = env.GIT_BRANCH ?: env.BRANCH_NAME ?: 'dev'
-                    env.BUILD_BRANCH = env.BUILD_BRANCH.replaceFirst('^refs/heads/', '')
-                    
                     // Get branch config from shared library
                     def branchConfig = envConfig().getBranchConfig(env.BUILD_BRANCH)
                     
@@ -38,18 +47,10 @@ pipeline {
                     
                     echo "=========================================="
                     echo "Building Branch: ${env.BUILD_BRANCH}"
+                    echo "Commit: ${env.GIT_COMMIT}"
                     echo "Will Deploy To: ${env.TARGET_ENV}"
                     echo "Auto Deploy: ${env.AUTO_DEPLOY}"
                     echo "=========================================="
-                }
-            }
-        }
-
-        stage('Checkout') {
-            steps {
-                checkout scm
-                script {
-                    env.GIT_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
             }
         }
