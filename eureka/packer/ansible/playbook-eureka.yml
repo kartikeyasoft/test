@@ -1,0 +1,142 @@
+---
+- name: Provision Eureka golden image
+  hosts: all
+  become: yes
+  vars:
+    app_user: "eureka"
+    app_name: "{{ lookup('env', 'SERVICE_NAME') }}"
+    app_version: "{{ lookup('env', 'SERVICE_VERSION') }}"
+    nexus_url: "{{ lookup('env', 'NEXUS_URL') }}"
+
+  tasks:
+    # - name: Update apt cache
+    #   apt:
+    #     update_cache: yes
+    #     cache_valid_time: 3600
+
+
+    # - name: Install prerequisites
+    #   apt:
+    #     name:
+    #       - apt-transport-https
+    #       - ca-certificates
+    #       - curl
+    #       - wget
+    #       - gnupg
+    #       - lsb-release
+    #     state: present
+
+    # - name: Add deadsnakes PPA for Python (if needed)
+    #   apt_repository:
+    #     repo: ppa:deadsnakes/ppa
+    #     state: present
+
+    # - name: Install Java 17
+    #   apt:
+    #     name: openjdk-17-jre-headless
+    #     state: present
+    #     update_cache: yes
+    #     force: yes
+
+    # - name: Verify Java installation
+    #   command: java -version
+    #   register: java_version
+    #   changed_when: false
+
+    # - name: Display Java version
+    #   debug:
+    #     msg: "{{ java_version.stderr }}"       
+
+    - name: Create eureka user
+      user:
+        name: "{{ app_user }}"
+        system: yes
+        home: "/opt/{{ app_name }}"
+        create_home: yes
+
+    - name: Create application directory
+      file:
+        path: "/opt/{{ app_name }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+
+    - name: Create application.yml
+      copy:
+        dest: "/opt/{{ app_name }}/application.yml"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+        content: |
+          server:
+            port: 8761
+          
+          eureka:
+            instance:
+              prefer-ip-address: true
+              instance-id: ${spring.cloud.client.ip-address}:${server.port}
+            client:
+              register-with-eureka: false
+              fetch-registry: false
+              service-url:
+                defaultZone: http://localhost:8761/eureka/
+            server:
+              enable-self-preservation: true
+          
+          management:
+            endpoints:
+              web:
+                exposure:
+                  include: health,info
+          
+          spring:
+            cloud:
+              inetutils:
+                preferred-networks:
+                  - 172.31
+
+    - name: Download Eureka JAR from Nexus
+      get_url:
+        url: "{{ nexus_url }}/com/ksapp/eureka/{{ app_version }}/eureka-{{ app_version }}.jar"
+        dest: "/opt/{{ app_name }}/{{ app_name }}.jar"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+        timeout: 120
+      retries: 3
+      delay: 10
+      register: download_result
+      until: download_result is success
+
+    - name: Create systemd service file
+      copy:
+        dest: "/etc/systemd/system/{{ app_name }}.service"
+        content: |
+          [Unit]
+          Description=Eureka Service Registry
+          After=network.target
+          
+          [Service]
+          User={{ app_user }}
+          Group={{ app_user }}
+          WorkingDirectory=/opt/{{ app_name }}
+          ExecStart=/usr/bin/java -jar /opt/{{ app_name }}/{{ app_name }}.jar --spring.config.location=file:/opt/{{ app_name }}/application.yml
+          SuccessExitStatus=143
+          Restart=always
+          RestartSec=10
+          StandardOutput=journal
+          StandardError=journal
+          
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: Enable and start service
+      systemd:
+        name: "{{ app_name }}"
+        enabled: yes
+        state: started
