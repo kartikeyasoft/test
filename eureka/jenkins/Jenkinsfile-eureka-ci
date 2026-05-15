@@ -5,6 +5,7 @@ pipeline {
 
     parameters {
         choice(name: 'ACTION', choices: ['build', 'build-and-deploy'], description: 'Action to perform')
+        string(name: 'BRANCH', defaultValue: 'dev', description: 'Git branch (dev/qa/main)')
     }
 
     tools {
@@ -25,30 +26,37 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                // Checkout first to get branch info
-                checkout scm
+                git url: 'https://github.com/kartikeyasoft/test.git', 
+                    branch: params.BRANCH
+                
                 script {
-                    // Get branch name after checkout
-                    env.BUILD_BRANCH = env.GIT_BRANCH ?: env.BRANCH_NAME ?: 'dev'
-                    env.BUILD_BRANCH = env.BUILD_BRANCH.replaceFirst('^refs/heads/', '')
+                    env.BUILD_BRANCH = params.BRANCH
                     env.GIT_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    
+                    echo "Checked out branch: ${env.BUILD_BRANCH}"
+                    echo "Commit: ${env.GIT_COMMIT}"
                 }
             }
         }
 
-        stage('Setup Branch') {
+        stage('Setup Branch Config') {
             steps {
                 script {
-                    // Get branch config from shared library
-                    def branchConfig = envConfig().getBranchConfig(env.BUILD_BRANCH)
-                    
-                    env.TARGET_ENV = branchConfig.environment
-                    env.AUTO_DEPLOY = branchConfig.auto_deploy.toString()
+                    // Simple branch to environment mapping
+                    if (env.BUILD_BRANCH == 'main') {
+                        env.TARGET_ENV = 'prod'
+                        env.AUTO_DEPLOY = 'false'
+                    } else if (env.BUILD_BRANCH == 'qa') {
+                        env.TARGET_ENV = 'qa'
+                        env.AUTO_DEPLOY = 'true'
+                    } else {
+                        env.TARGET_ENV = 'dev'
+                        env.AUTO_DEPLOY = 'true'
+                    }
                     
                     echo "=========================================="
                     echo "Building Branch: ${env.BUILD_BRANCH}"
-                    echo "Commit: ${env.GIT_COMMIT}"
-                    echo "Will Deploy To: ${env.TARGET_ENV}"
+                    echo "Target Environment: ${env.TARGET_ENV}"
                     echo "Auto Deploy: ${env.AUTO_DEPLOY}"
                     echo "=========================================="
                 }
@@ -65,7 +73,14 @@ pipeline {
                     env.EUREKA_PORT = config.eureka.defaultPort
                     env.BASE_AMI_ID = config.baseAmi.ubuntu2204
                     
-                    echo "Loaded config for ${env.SERVICE_NAME}"
+                    echo "=========================================="
+                    echo "Loaded Configuration"
+                    echo "=========================================="
+                    echo "Nexus URL: ${env.NEXUS_URL}"
+                    echo "AWS Region: ${env.AWS_DEFAULT_REGION}"
+                    echo "Eureka Port: ${env.EUREKA_PORT}"
+                    echo "Base AMI: ${env.BASE_AMI_ID}"
+                    echo "=========================================="
                 }
             }
         }
@@ -75,7 +90,7 @@ pipeline {
                 dir('eureka') {
                     script {
                         env.SERVICE_VERSION = sh(script: 'mvn help:evaluate -Dexpression=project.version -q -DforceStdout', returnStdout: true).trim()
-                        echo "Version: ${env.SERVICE_VERSION}"
+                        echo "Building version: ${env.SERVICE_VERSION}"
                     }
                 }
             }
@@ -175,14 +190,15 @@ pipeline {
                             --name "/eureka/${env.BUILD_BRANCH}/latest-ami" \
                             --value "${env.AMI_ID}" \
                             --type "String" \
-                            --overwrite
+                            --overwrite || true
                         
                         aws ssm put-parameter \
                             --name "/eureka/latest-ami" \
                             --value "${env.AMI_ID}" \
                             --type "String" \
-                            --overwrite
+                            --overwrite || true
                     """
+                    echo "✅ Stored AMI in SSM: ${env.AMI_ID}"
                 }
             }
         }
@@ -203,7 +219,6 @@ pipeline {
                         parameters: [
                             string(name: 'ENVIRONMENT', value: env.TARGET_ENV),
                             string(name: 'AMI_ID', value: env.AMI_ID),
-                            string(name: 'BRANCH', value: env.BUILD_BRANCH),
                             choice(name: 'ACTION', value: 'apply')
                         ],
                         wait: false
@@ -227,10 +242,11 @@ pipeline {
                     echo "Branch: ${env.BUILD_BRANCH}"
                     echo "AMI ID: ${env.AMI_ID}"
                     echo ""
-                    echo "To deploy, run 'eureka-cd' with:"
-                    echo "  ENVIRONMENT: ${env.TARGET_ENV}"
-                    echo "  AMI_ID: ${env.AMI_ID}"
-                    echo "  BRANCH: ${env.BUILD_BRANCH}"
+                    echo "To deploy to ${env.TARGET_ENV}:"
+                    echo "  Job: eureka-cd"
+                    echo "  Parameters:"
+                    echo "    - ENVIRONMENT: ${env.TARGET_ENV}"
+                    echo "    - AMI_ID: ${env.AMI_ID}"
                     echo "=========================================="
                 }
             }
@@ -239,10 +255,17 @@ pipeline {
 
     post {
         success {
-            echo "✅ CI Success! AMI: ${env.AMI_ID}"
+            echo "=========================================="
+            echo "✅ CI Success!"
+            echo "=========================================="
+            echo "Branch: ${env.BUILD_BRANCH}"
+            echo "AMI ID: ${env.AMI_ID}"
+            echo "=========================================="
         }
         failure {
+            echo "=========================================="
             echo "❌ CI Failed for branch ${env.BUILD_BRANCH}"
+            echo "=========================================="
         }
     }
 }
