@@ -5,7 +5,6 @@ pipeline {
 
     parameters {
         choice(name: 'ACTION', choices: ['build', 'build-and-deploy'], description: 'Action to perform')
-        string(name: 'TARGET_ENV', defaultValue: 'dev', description: 'Environment for CD (dev/qa/prod)')
     }
 
     tools {
@@ -24,6 +23,37 @@ pipeline {
     }
 
     stages {
+        stage('Setup Branch') {
+            steps {
+                script {
+                    // Get branch name from Jenkins
+                    env.BUILD_BRANCH = env.GIT_BRANCH ?: env.BRANCH_NAME ?: 'dev'
+                    env.BUILD_BRANCH = env.BUILD_BRANCH.replaceFirst('^refs/heads/', '')
+                    
+                    // Get branch config from shared library
+                    def branchConfig = envConfig().getBranchConfig(env.BUILD_BRANCH)
+                    
+                    env.TARGET_ENV = branchConfig.environment
+                    env.AUTO_DEPLOY = branchConfig.auto_deploy.toString()
+                    
+                    echo "=========================================="
+                    echo "Building Branch: ${env.BUILD_BRANCH}"
+                    echo "Will Deploy To: ${env.TARGET_ENV}"
+                    echo "Auto Deploy: ${env.AUTO_DEPLOY}"
+                    echo "=========================================="
+                }
+            }
+        }
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+                script {
+                    env.GIT_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+            }
+        }
+
         stage('Load Configuration') {
             steps {
                 script {
@@ -34,19 +64,8 @@ pipeline {
                     env.EUREKA_PORT = config.eureka.defaultPort
                     env.BASE_AMI_ID = config.baseAmi.ubuntu2204
                     
-                    echo "=========================================="
-                    echo "Eureka CI Pipeline (Environment Agnostic)"
-                    echo "=========================================="
-                    echo "Action: ${params.ACTION}"
-                    echo "Will deploy to: ${params.TARGET_ENV} (if build-and-deploy)"
-                    echo "=========================================="
+                    echo "Loaded config for ${env.SERVICE_NAME}"
                 }
-            }
-        }
-
-        stage('Checkout') {
-            steps {
-                git url: 'https://github.com/kartikeyasoft/test.git', branch: 'master'
             }
         }
 
@@ -55,17 +74,17 @@ pipeline {
                 dir('eureka') {
                     script {
                         env.SERVICE_VERSION = sh(script: 'mvn help:evaluate -Dexpression=project.version -q -DforceStdout', returnStdout: true).trim()
-                        echo "Building version: ${env.SERVICE_VERSION}"
+                        echo "Version: ${env.SERVICE_VERSION}"
                     }
                 }
             }
         }
 
-        stage('Maven Compile') {
+        stage('Maven Build') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 dir('eureka') {
-                    sh 'mvn clean compile -Dmaven.test.skip=true'
+                    sh 'mvn clean package -Dmaven.test.skip=true'
                 }
             }
         }
@@ -78,21 +97,10 @@ pipeline {
                         sh """
                             mvn sonar:sonar \
                                 -Dsonar.projectKey=com.ksapp:eureka \
-                                -Dsonar.projectName="Eureka_Service_Registry_v${env.SERVICE_VERSION}" \
-                                -Dsonar.projectVersion=${env.SERVICE_VERSION} \
-                                -Dsonar.sources=src/main/java \
-                                -Dsonar.java.binaries=target/classes
+                                -Dsonar.projectName="Eureka_${env.BUILD_BRANCH}" \
+                                -Dsonar.projectVersion=${env.SERVICE_VERSION}
                         """
                     }
-                }
-            }
-        }
-
-        stage('Maven Package') {
-            when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
-            steps {
-                dir('eureka') {
-                    sh 'mvn package -Dmaven.test.skip=true'
                 }
             }
         }
@@ -117,7 +125,7 @@ pipeline {
             }
         }
 
-        stage('Bake Golden Image') {
+        stage('Bake Golden AMI') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 script {
@@ -126,7 +134,9 @@ pipeline {
                         "SERVICE_NAME=${env.SERVICE_NAME}",
                         "NEXUS_URL=${env.NEXUS_URL}",
                         "EUREKA_PORT=${env.EUREKA_PORT}",
-                        "BASE_AMI_ID=${env.BASE_AMI_ID}"
+                        "BASE_AMI_ID=${env.BASE_AMI_ID}",
+                        "GIT_BRANCH=${env.BUILD_BRANCH}",
+                        "GIT_COMMIT=${env.GIT_COMMIT}"
                     ]) {
                         dir('eureka/packer') {
                             sh '''
@@ -137,50 +147,90 @@ pipeline {
                                     -var "nexus_url=${NEXUS_URL}" \
                                     -var "eureka_port=${EUREKA_PORT}" \
                                     -var "source_ami=${BASE_AMI_ID}" \
+                                    -var "git_branch=${GIT_BRANCH}" \
                                     eureka.pkr.hcl 2>&1 | tee build-output.txt
                                 
                                 AMI_ID=$(grep -oE 'ami-[a-f0-9]{17}' build-output.txt | tail -1)
-                                echo "GOLDEN_AMI_ID=$AMI_ID" > golden-ami.properties
-                                echo "Successfully created AMI: $AMI_ID"
+                                echo "AMI_ID=$AMI_ID" > ami.properties
                             '''
                             
                             script {
-                                def amiProps = readFile('golden-ami.properties')
+                                def amiProps = readFile('ami.properties')
                                 env.AMI_ID = amiProps.split('=')[1].trim()
-                                echo "✅ Captured AMI ID: ${env.AMI_ID}"
+                                echo "✅ AMI Created: ${env.AMI_ID}"
                             }
-                            stash name: 'eureka-ami', includes: 'golden-ami.properties'
                         }
                     }
                 }
             }
         }
 
-        stage('Trigger CD Pipeline') {
-            when { expression { params.ACTION == 'build-and-deploy' && env.AMI_ID != '' } }
+        stage('Store AMI Info') {
+            when { expression { env.AMI_ID != null } }
+            steps {
+                script {
+                    sh """
+                        aws ssm put-parameter \
+                            --name "/eureka/${env.BUILD_BRANCH}/latest-ami" \
+                            --value "${env.AMI_ID}" \
+                            --type "String" \
+                            --overwrite
+                        
+                        aws ssm put-parameter \
+                            --name "/eureka/latest-ami" \
+                            --value "${env.AMI_ID}" \
+                            --type "String" \
+                            --overwrite
+                    """
+                }
+            }
+        }
+
+        stage('Trigger CD') {
+            when { 
+                expression { 
+                    params.ACTION == 'build-and-deploy' && 
+                    env.AUTO_DEPLOY == 'true' &&
+                    env.AMI_ID != null
+                } 
+            }
+            steps {
+                script {
+                    echo "Auto-deploying ${env.BUILD_BRANCH} to ${env.TARGET_ENV}"
+                    
+                    build job: 'eureka-cd',
+                        parameters: [
+                            string(name: 'ENVIRONMENT', value: env.TARGET_ENV),
+                            string(name: 'AMI_ID', value: env.AMI_ID),
+                            string(name: 'BRANCH', value: env.BUILD_BRANCH),
+                            choice(name: 'ACTION', value: 'apply')
+                        ],
+                        wait: false
+                }
+            }
+        }
+        
+        stage('Manual Deploy Required') {
+            when { 
+                expression { 
+                    params.ACTION == 'build-and-deploy' && 
+                    env.AUTO_DEPLOY == 'false' &&
+                    env.AMI_ID != null
+                } 
+            }
             steps {
                 script {
                     echo "=========================================="
-                    echo "Triggering CD Pipeline for ${params.TARGET_ENV}"
+                    echo "✅ AMI Built Successfully"
                     echo "=========================================="
-                    echo "Version: ${env.SERVICE_VERSION}"
+                    echo "Branch: ${env.BUILD_BRANCH}"
                     echo "AMI ID: ${env.AMI_ID}"
-                    echo "Target Environment: ${params.TARGET_ENV}"
+                    echo ""
+                    echo "To deploy, run 'eureka-cd' with:"
+                    echo "  ENVIRONMENT: ${env.TARGET_ENV}"
+                    echo "  AMI_ID: ${env.AMI_ID}"
+                    echo "  BRANCH: ${env.BUILD_BRANCH}"
                     echo "=========================================="
-                    
-                    if (env.AMI_ID && env.AMI_ID != '' && env.AMI_ID =~ /^ami-[a-f0-9]{17}$/) {
-                        build job: 'eureka-cd',
-                            parameters: [
-                                string(name: 'AMI_ID', value: env.AMI_ID),
-                                string(name: 'ENVIRONMENT', value: params.TARGET_ENV),
-                                choice(name: 'ACTION', value: 'apply')
-                            ],
-                            wait: false
-                        
-                        echo "✅ CD pipeline triggered for ${params.TARGET_ENV}!"
-                    } else {
-                        error "❌ Invalid AMI ID: ${env.AMI_ID}"
-                    }
                 }
             }
         }
@@ -188,10 +238,10 @@ pipeline {
 
     post {
         success {
-            echo "🎉 Eureka CI completed! AMI: ${env.AMI_ID}"
+            echo "✅ CI Success! AMI: ${env.AMI_ID}"
         }
         failure {
-            echo "❌ Eureka CI failed!"
+            echo "❌ CI Failed for branch ${env.BUILD_BRANCH}"
         }
     }
 }
