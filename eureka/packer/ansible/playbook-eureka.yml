@@ -8,44 +8,7 @@
     app_version: "{{ lookup('env', 'SERVICE_VERSION') }}"
     nexus_url: "{{ lookup('env', 'NEXUS_URL') }}"
 
-  tasks:
-    # - name: Update apt cache
-    #   apt:
-    #     update_cache: yes
-    #     cache_valid_time: 3600
-
-
-    # - name: Install prerequisites
-    #   apt:
-    #     name:
-    #       - apt-transport-https
-    #       - ca-certificates
-    #       - curl
-    #       - wget
-    #       - gnupg
-    #       - lsb-release
-    #     state: present
-
-    # - name: Add deadsnakes PPA for Python (if needed)
-    #   apt_repository:
-    #     repo: ppa:deadsnakes/ppa
-    #     state: present
-
-    # - name: Install Java 17
-    #   apt:
-    #     name: openjdk-17-jre-headless
-    #     state: present
-    #     update_cache: yes
-    #     force: yes
-
-    # - name: Verify Java installation
-    #   command: java -version
-    #   register: java_version
-    #   changed_when: false
-
-    # - name: Display Java version
-    #   debug:
-    #     msg: "{{ java_version.stderr }}"       
+  tasks: 
 
     - name: Create eureka user
       user:
