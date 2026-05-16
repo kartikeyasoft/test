@@ -61,14 +61,36 @@ locals {
   
   # Environment mapping - master/main -> prod, all others use branch name
   environment = var.git_branch == "master" || var.git_branch == "main" ? "prod" : var.git_branch
+  
+  # Generate timestamp for unique naming
+  timestamp = formatdate("YYYYMMDD-HHmmss", timestamp())
+  date      = formatdate("YYYYMMDD", timestamp())
+  time      = formatdate("HHmmss", timestamp())
 }
 
 source "amazon-ebs" "eureka" {
-  ami_name      = "myapp-${var.service_name}-${var.service_version}-${local.clean_branch}-${formatdate("YYYYMMDD-HHmmss", timestamp())}"
+  ami_name      = "myapp-${var.service_name}-${var.service_version}-${local.clean_branch}-${local.timestamp}"
   instance_type = "t3.micro"
   region        = "us-east-1"
   source_ami    = var.source_ami
   ssh_username  = "ubuntu"
+  
+  # Temporary instance naming for easy identification
+  temp_name = "packer-${var.service_name}-${var.service_version}-${local.clean_branch}-${local.timestamp}"
+  
+  # Optional: Add temporary instance tags (requires additional config)
+  temporary_instance_tags = {
+    Name        = "packer-${var.service_name}-${var.service_version}-${local.clean_branch}"
+    Service     = var.service_name
+    Version     = var.service_version
+    Branch      = var.git_branch
+    Environment = local.environment
+    PackerBuild = "true"
+    TempInstance = "true"
+    BuildNumber = var.build_number
+    BuiltBy     = "packer"
+    AutoCleanup = "true"
+  }
   
   tags = {
     Name            = "${var.service_name}-ami-${var.service_version}-${local.clean_branch}"
@@ -82,8 +104,8 @@ source "amazon-ebs" "eureka" {
     Timestamp       = formatdate("YYYY-MM-DD HH:mm:ss", timestamp())
     EurekaPort      = var.eureka_port
     SourceAMI       = var.source_ami
-    BuildDate       = formatdate("YYYYMMDD", timestamp())
-    BuildTime       = formatdate("HHmmss", timestamp())
+    BuildDate       = local.date
+    BuildTime       = local.time
   }
 }
 
