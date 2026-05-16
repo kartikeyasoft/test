@@ -67,28 +67,25 @@ source "amazon-ebs" "eureka" {
   source_ami    = var.source_ami
   ssh_username  = "ubuntu"
   
-  # Temporary instance naming for easy identification
-  temp_name = "packer-${var.service_name}-${var.service_version}-${local.clean_branch}-${local.timestamp}"
-  
-  # Optional: Add temporary instance tags (requires additional config)
-  temporary_instance_tags = {
+  # Tags for the temporary EC2 instance (Packer builder)
+  run_tags = {
     Name        = "packer-${var.service_name}-${var.service_version}-${local.clean_branch}"
     Service     = var.service_name
     Version     = var.service_version
     Branch      = var.git_branch
     Environment = local.environment
     PackerBuild = "true"
-    TempInstance = "true"
     BuildNumber = var.build_number
     BuiltBy     = "packer"
-    AutoCleanup = "true"
   }
   
+  # Tags for the final AMI
   tags = {
     Name            = "${var.service_name}-ami-${var.service_version}-${local.clean_branch}"
     Service         = var.service_name
     Version         = var.service_version
     Branch          = var.git_branch
+    CleanBranch     = local.clean_branch
     Environment     = local.environment
     BuiltBy         = "Jenkins"
     BuildNumber     = var.build_number
