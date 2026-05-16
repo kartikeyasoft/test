@@ -141,39 +141,19 @@ pipeline {
             }
         }
 
-        stage('Bake Golden AMI') {
+       stage('Bake Golden AMI') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 script {
-                    // Ensure we're in the right directory
                     dir('eureka/packer') {
-                        // First, verify packer template exists and variables are defined
                         sh '''
-                            echo "=== Packer Template Validation ==="
-                            echo "Current directory: $(pwd)"
-                            echo "Files in directory:"
-                            ls -la
-                            
-                            echo ""
-                            echo "Checking for git_branch variable in template:"
-                            grep "git_branch" eureka.pkr.hcl && echo "✓ git_branch variable found" || echo "✗ git_branch variable NOT found"
-                            
-                            echo ""
-                            echo "Validating packer template with variables..."
-                            # Validate with variables to avoid "unset variable" errors
-                            packer validate \
-                                -var "service_version=${SERVICE_VERSION}" \
-                                -var "service_name=${SERVICE_NAME}" \
-                                -var "nexus_url=${NEXUS_URL}" \
-                                -var "eureka_port=${EUREKA_PORT}" \
-                                -var "source_ami=${BASE_AMI_ID}" \
-                                -var "git_branch=${GIT_BRANCH}" \
-                                eureka.pkr.hcl
-                            
-                            echo "✓ Template validation passed"
+                            echo "=== Building AMI with branch name ==="
+                            echo "Branch: ${GIT_BRANCH}"
+                            echo "Version: ${SERVICE_VERSION}"
+                            echo "Commit: ${GIT_COMMIT}"
+                            echo "Build Number: ${BUILD_NUMBER}"
                         '''
                         
-                        // Build the AMI
                         sh '''
                             packer init eureka.pkr.hcl
                             
@@ -184,16 +164,14 @@ pipeline {
                                 -var "eureka_port=${EUREKA_PORT}" \
                                 -var "source_ami=${BASE_AMI_ID}" \
                                 -var "git_branch=${GIT_BRANCH}" \
+                                -var "git_commit=${GIT_COMMIT}" \
+                                -var "build_number=${BUILD_NUMBER}" \
                                 eureka.pkr.hcl 2>&1 | tee build-output.txt
                             
-                            # Extract AMI ID more reliably
-                            AMI_ID=$(grep -E 'us-east-1: ami-[a-f0-9]{17}' build-output.txt | tail -1 | grep -oE 'ami-[a-f0-9]{17}' || \
-                                     grep -E 'AMI: ami-[a-f0-9]{17}' build-output.txt | tail -1 | grep -oE 'ami-[a-f0-9]{17}' || \
-                                     grep -oE 'ami-[a-f0-9]{17}' build-output.txt | tail -1)
+                            AMI_ID=$(grep -oE 'ami-[a-f0-9]{17}' build-output.txt | tail -1)
                             
                             if [ -z "$AMI_ID" ]; then
                                 echo "ERROR: Failed to extract AMI ID from build output"
-                                echo "Last 20 lines of build output:"
                                 tail -20 build-output.txt
                                 exit 1
                             fi
@@ -206,6 +184,10 @@ pipeline {
                             def amiProps = readFile('ami.properties')
                             env.AMI_ID = amiProps.split('=')[1].trim()
                             echo "✅ AMI Created: ${env.AMI_ID}"
+                            
+                            // Display full AMI name for reference
+                            def amiName = "myapp-${env.SERVICE_NAME}-${env.SERVICE_VERSION}-${env.GIT_BRANCH}-*"
+                            echo "📝 AMI Name Pattern: ${amiName}"
                         }
                     }
                 }

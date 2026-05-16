@@ -12,7 +12,8 @@ packer {
 }
 
 variable "service_name" {
-  type = string
+  type        = string
+  description = "Name of the service"
 }
 
 variable "git_branch" {
@@ -22,7 +23,8 @@ variable "git_branch" {
 }
 
 variable "service_version" {
-  type = string
+  type        = string
+  description = "Version of the service"
 }
 
 variable "source_ami" {
@@ -31,30 +33,47 @@ variable "source_ami" {
 }
 
 variable "nexus_url" {
-  type = string
+  type        = string
+  description = "Nexus repository URL"
 }
 
 variable "eureka_port" {
-  type    = string
-  default = "8761"
+  type        = string
+  default     = "8761"
+  description = "Eureka service port"
+}
+
+variable "git_commit" {
+  type        = string
+  default     = "unknown"
+  description = "Git commit hash"
+}
+
+variable "build_number" {
+  type        = string
+  default     = "local"
+  description = "Jenkins build number"
 }
 
 source "amazon-ebs" "eureka" {
-  # Include branch name in AMI name for better identification
-  ami_name        = "myapp-${var.service_name}-${var.service_version}-${var.git_branch}-${formatdate("YYYYMMDD-HHmmss", timestamp())}"
-  instance_type   = "t3.micro"
-  region          = "us-east-1"
-  source_ami      = var.source_ami
-  ssh_username    = "ubuntu"
+  ami_name      = "myapp-${var.service_name}-${var.service_version}-${var.git_branch}-${formatdate("YYYYMMDD-HHmmss", timestamp())}"
+  instance_type = "t3.micro"
+  region        = "us-east-1"
+  source_ami    = var.source_ami
+  ssh_username  = "ubuntu"
   
   tags = {
-    Name        = "${var.service_name}-ami-${var.service_version}-${var.git_branch}"
-    Service     = var.service_name
-    Version     = var.service_version
-    Branch      = var.git_branch
-    BuiltBy     = "Jenkins"
-    Environment = var.git_branch == "master" || var.git_branch == "main" ? "production" : (var.git_branch == "qa" ? "staging" : "development")
-    Timestamp   = formatdate("YYYY-MM-DD HH:mm:ss", timestamp())
+    Name            = "${var.service_name}-ami-${var.service_version}-${var.git_branch}"
+    Service         = var.service_name
+    Version         = var.service_version
+    Branch          = var.git_branch
+    BuiltBy         = "Jenkins"
+    BuildNumber     = var.build_number
+    GitCommit       = var.git_commit
+    Environment     = var.git_branch == "master" || var.git_branch == "main" ? "production" : (var.git_branch == "qa" ? "staging" : "development")
+    Timestamp       = formatdate("YYYY-MM-DD HH:mm:ss", timestamp())
+    EurekaPort      = var.eureka_port
+    SourceAMI       = var.source_ami
   }
 }
 
@@ -68,7 +87,9 @@ build {
       "SERVICE_VERSION=${var.service_version}",
       "NEXUS_URL=${var.nexus_url}",
       "EUREKA_PORT=${var.eureka_port}",
-      "GIT_BRANCH=${var.git_branch}"
+      "GIT_BRANCH=${var.git_branch}",
+      "GIT_COMMIT=${var.git_commit}",
+      "BUILD_NUMBER=${var.build_number}"
     ]
   }
 }
