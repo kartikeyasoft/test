@@ -11,49 +11,14 @@ packer {
   }
 }
 
-variable "service_name" {
-  type        = string
-  description = "Name of the service"
-}
-
-variable "git_branch" {
-  type        = string
-  default     = "dev"
-  description = "Git branch being built (dev, qa, master, main)"
-}
-
-variable "service_version" {
-  type        = string
-  description = "Version of the service"
-}
-
-variable "source_ami" {
-  description = "Base AMI ID to use for the build"
-  type        = string
-}
-
-variable "nexus_url" {
-  type        = string
-  description = "Nexus repository URL"
-}
-
-variable "eureka_port" {
-  type        = string
-  default     = "8761"
-  description = "Eureka service port"
-}
-
-variable "git_commit" {
-  type        = string
-  default     = "unknown"
-  description = "Git commit hash"
-}
-
-variable "build_number" {
-  type        = string
-  default     = "local"
-  description = "Jenkins build number"
-}
+variable "service_name"    { type = string }
+variable "git_branch"      { type = string, default = "dev" }
+variable "service_version" { type = string }
+variable "source_ami"      { type = string }
+variable "nexus_url"       { type = string }
+variable "eureka_port"     { type = string, default = "8761" }
+variable "git_commit"      { type = string, default = "unknown" }
+variable "build_number"    { type = string, default = "local" }
 
 locals {
   # Clean branch name by replacing special characters
