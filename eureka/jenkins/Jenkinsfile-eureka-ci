@@ -26,19 +26,21 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/kartikeyasoft/test.git', 
-                    branch: params.BRANCH
+                checkout([$class: 'GitSCM',
+                    branches: [[name: params.BRANCH]],
+                    userRemoteConfigs: [[url: 'https://github.com/kartikeyasoft/test.git']]
+                ])
                 
                 script {
                     env.BUILD_BRANCH = params.BRANCH
-                    env.GIT_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.GIT_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
+                    env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     
                     echo "Checked out branch: ${env.BUILD_BRANCH}"
-                    echo "Commit: ${env.GIT_COMMIT}"
+                    echo "Commit: ${env.GIT_COMMIT_SHORT}"
                 }
             }
         }
-
         stage('Setup Branch Config') {
             steps {
                 script {
@@ -141,14 +143,14 @@ pipeline {
             }
         }
 
-       stage('Bake Golden AMI') {
+        stage('Bake Golden AMI') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 script {
                     dir('eureka/packer') {
                         sh '''
                             echo "=== Building AMI with branch name ==="
-                            echo "Branch: ${GIT_BRANCH}"
+                            echo "Branch: ${BUILD_BRANCH}"
                             echo "Version: ${SERVICE_VERSION}"
                             echo "Commit: ${GIT_COMMIT}"
                             echo "Build Number: ${BUILD_NUMBER}"
@@ -163,7 +165,7 @@ pipeline {
                                 -var "nexus_url=${NEXUS_URL}" \
                                 -var "eureka_port=${EUREKA_PORT}" \
                                 -var "source_ami=${BASE_AMI_ID}" \
-                                -var "git_branch=${GIT_BRANCH}" \
+                                -var "git_branch=${BUILD_BRANCH}" \
                                 -var "git_commit=${GIT_COMMIT}" \
                                 -var "build_number=${BUILD_NUMBER}" \
                                 eureka.pkr.hcl 2>&1 | tee build-output.txt
@@ -186,7 +188,7 @@ pipeline {
                             echo "✅ AMI Created: ${env.AMI_ID}"
                             
                             // Display full AMI name for reference
-                            def amiName = "myapp-${env.SERVICE_NAME}-${env.SERVICE_VERSION}-${env.GIT_BRANCH}-*"
+                            def amiName = "myapp-${env.SERVICE_NAME}-${env.SERVICE_VERSION}-${env.BUILD_BRANCH}-*"
                             echo "📝 AMI Name Pattern: ${amiName}"
                         }
                     }
