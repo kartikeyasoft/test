@@ -26,12 +26,13 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git url: 'https://github.com/kartikeyasoft/test.git', 
-                    branch: params.BRANCH
+                checkout([$class: 'GitSCM',
+                    branches: [[name: params.BRANCH]],
+                    userRemoteConfigs: [[url: 'https://github.com/kartikeyasoft/test.git']]
+                ])
                 
                 script {
-                    // Clean branch name (remove any origin/ prefix if present)
-                    env.BUILD_BRANCH = params.BRANCH.replaceAll("origin/", "").replaceAll("refs/heads/", "")
+                    env.BUILD_BRANCH = params.BRANCH
                     env.GIT_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
                     env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     
@@ -40,7 +41,6 @@ pipeline {
                 }
             }
         }
-
         stage('Setup Branch Config') {
             steps {
                 script {
