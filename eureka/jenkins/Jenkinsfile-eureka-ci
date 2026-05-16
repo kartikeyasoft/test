@@ -19,8 +19,6 @@ pipeline {
         NEXUS_CREDS = credentials('nexus-creds')
         AWS_ACCESS_KEY_ID = credentials('aws-access-key-id')
         AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
-        
-        SERVICE_NAME = 'eureka'
     }
 
     stages {
@@ -35,12 +33,15 @@ pipeline {
                     env.BUILD_BRANCH = params.BRANCH
                     env.GIT_COMMIT = sh(script: 'git rev-parse HEAD', returnStdout: true).trim()
                     env.GIT_COMMIT_SHORT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
                     
                     echo "Checked out branch: ${env.BUILD_BRANCH}"
                     echo "Commit: ${env.GIT_COMMIT_SHORT}"
+                    echo "Timestamp: ${env.TIMESTAMP}"
                 }
             }
         }
+
         stage('Setup Branch Config') {
             steps {
                 script {
@@ -74,6 +75,8 @@ pipeline {
                     env.AWS_DEFAULT_REGION = config.aws.region
                     env.EUREKA_PORT = config.eureka.defaultPort
                     env.BASE_AMI_ID = config.baseAmi.ubuntu2204
+                    env.SERVICE_NAME = config.servicename.obj1
+                    env.S3_BUCKET = config.s3.bucket
                     
                     echo "=========================================="
                     echo "Loaded Configuration"
@@ -82,6 +85,8 @@ pipeline {
                     echo "AWS Region: ${env.AWS_DEFAULT_REGION}"
                     echo "Eureka Port: ${env.EUREKA_PORT}"
                     echo "Base AMI: ${env.BASE_AMI_ID}"
+                    echo "Service Name: ${env.SERVICE_NAME}"
+                    echo "S3 Bucket Name: ${env.S3_BUCKET}"
                     echo "=========================================="
                 }
             }
@@ -196,24 +201,105 @@ pipeline {
             }
         }
 
-        stage('Store AMI Info') {
+        stage('Store AMI Info in S3 + SSM') {
             when { expression { env.AMI_ID != null && env.AMI_ID != '' } }
             steps {
                 script {
+                    // Create comprehensive metadata
+                    def amiMetadata = [
+                        ami_id: env.AMI_ID,
+                        branch: env.BUILD_BRANCH,
+                        version: env.SERVICE_VERSION,
+                        build_number: env.BUILD_NUMBER,
+                        commit: env.GIT_COMMIT,
+                        commit_short: env.GIT_COMMIT_SHORT,
+                        timestamp: env.TIMESTAMP,
+                        created_at: new Date().toISOString(),
+                        created_by: "jenkins",
+                        job_name: env.JOB_NAME,
+                        build_url: env.BUILD_URL,
+                        source_ami: env.BASE_AMI_ID,
+                        eureka_port: env.EUREKA_PORT,
+                        environment: env.TARGET_ENV,
+                        service_name: env.SERVICE_NAME
+                    ]
+                    
+                    // Write metadata to JSON file
+                    writeJSON file: 'ami-metadata.json', json: amiMetadata
+                    
+                    // S3 paths
+                    def s3KeyTimestamp = "eureka/amis/${env.BUILD_BRANCH}/${env.TIMESTAMP}.json"
+                    def s3KeyBuild = "eureka/builds/${env.BUILD_BRANCH}/build-${env.BUILD_NUMBER}.json"
+                    def s3KeyLatest = "eureka/latest/${env.BUILD_BRANCH}.json"
+                    def s3KeyCommit = "eureka/commits/${env.BUILD_BRANCH}/${env.GIT_COMMIT_SHORT}.json"
+                    
+                    // Upload to S3 (source of truth - keeps full history)
                     sh """
+                        echo "Uploading AMI metadata to S3..."
+                        
+                        # Create bucket if it doesn't exist
+                        aws s3 mb s3://${env.S3_BUCKET} || true
+                        
+                        # Store with timestamp (complete history)
+                        aws s3 cp ami-metadata.json s3://${env.S3_BUCKET}/${s3KeyTimestamp}
+                        
+                        # Store by build number (easy lookup)
+                        aws s3 cp ami-metadata.json s3://${env.S3_BUCKET}/${s3KeyBuild}
+                        
+                        # Store by commit (traceability)
+                        aws s3 cp ami-metadata.json s3://${env.S3_BUCKET}/${s3KeyCommit}
+                        
+                        # Update latest pointer (overwrites)
+                        aws s3 cp ami-metadata.json s3://${env.S3_BUCKET}/${s3KeyLatest}
+                        
+                        echo "✅ S3 upload complete"
+                    """
+                    
+                    // Update SSM (fast cache - no duplication, just pointers)
+                    sh """
+                        echo "Updating SSM parameters..."
+                        
+                        # Fast lookup: Latest AMI ID
                         aws ssm put-parameter \
                             --name "/eureka/${env.BUILD_BRANCH}/latest-ami" \
                             --value "${env.AMI_ID}" \
                             --type "String" \
-                            --overwrite || true
+                            --overwrite \
+                            --description "Latest AMI for ${env.BUILD_BRANCH} branch | Build ${env.BUILD_NUMBER}"
                         
+                        # Fast lookup: Latest build number
+                        aws ssm put-parameter \
+                            --name "/eureka/${env.BUILD_BRANCH}/latest-build" \
+                            --value "${env.BUILD_NUMBER}" \
+                            --type "String" \
+                            --overwrite \
+                            --description "Latest build number for ${env.BUILD_BRANCH} branch"
+                        
+                        # Pointer to full metadata in S3
+                        aws ssm put-parameter \
+                            --name "/eureka/${env.BUILD_BRANCH}/metadata" \
+                            --value "s3://${env.S3_BUCKET}/eureka/latest/${env.BUILD_BRANCH}.json" \
+                            --type "String" \
+                            --overwrite \
+                            --description "S3 path to latest AMI metadata"
+                        
+                        # Global latest AMI across all branches
                         aws ssm put-parameter \
                             --name "/eureka/latest-ami" \
                             --value "${env.AMI_ID}" \
                             --type "String" \
-                            --overwrite || true
+                            --overwrite \
+                            --description "Most recent AMI across all branches"
                     """
-                    echo "✅ Stored AMI in SSM: ${env.AMI_ID}"
+                    
+                    echo "=========================================="
+                    echo "✅ AMI Information Stored Successfully"
+                    echo "=========================================="
+                    echo "S3 Bucket: ${env.S3_BUCKET}"
+                    echo "S3 History: s3://${env.S3_BUCKET}/eureka/amis/${env.BUILD_BRANCH}/"
+                    echo "SSM Latest: /eureka/${env.BUILD_BRANCH}/latest-ami = ${env.AMI_ID}"
+                    echo "SSM Metadata: /eureka/${env.BUILD_BRANCH}/metadata"
+                    echo "=========================================="
                 }
             }
         }
@@ -258,6 +344,10 @@ pipeline {
                     echo "=========================================="
                     echo "Branch: ${env.BUILD_BRANCH}"
                     echo "AMI ID: ${env.AMI_ID}"
+                    echo "S3 Bucket: ${env.S3_BUCKET}"
+                    echo ""
+                    echo "To view full metadata:"
+                    echo "  aws s3 cp s3://${env.S3_BUCKET}/eureka/latest/${env.BUILD_BRANCH}.json -"
                     echo ""
                     echo "To deploy to ${env.TARGET_ENV}:"
                     echo "  Job: eureka-cd"
@@ -277,6 +367,8 @@ pipeline {
             echo "=========================================="
             echo "Branch: ${env.BUILD_BRANCH}"
             echo "AMI ID: ${env.AMI_ID}"
+            echo "Service: ${env.SERVICE_NAME}"
+            echo "S3 Path: s3://${env.S3_BUCKET}/eureka/amis/${env.BUILD_BRANCH}/${env.TIMESTAMP}.json"
             echo "=========================================="
         }
         failure {
