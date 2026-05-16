@@ -69,29 +69,39 @@ pipeline {
         stage('Load Configuration') {
             steps {
                 script {
-                    def config = envConfig()
-                    
-                    env.NEXUS_URL = config.nexus.url
-                    env.AWS_DEFAULT_REGION = config.aws.region
-                    env.EUREKA_PORT = config.eureka.defaultPort
-                    env.BASE_AMI_ID = config.baseAmi.ubuntu2204
-                    env.SERVICE_NAME = config.servicename.obj1
-                    env.S3_BUCKET = config.s3.bucket
-                    
-                    echo "=========================================="
-                    echo "Loaded Configuration"
-                    echo "=========================================="
-                    echo "Nexus URL: ${env.NEXUS_URL}"
-                    echo "AWS Region: ${env.AWS_DEFAULT_REGION}"
-                    echo "Eureka Port: ${env.EUREKA_PORT}"
-                    echo "Base AMI: ${env.BASE_AMI_ID}"
-                    echo "Service Name: ${env.SERVICE_NAME}"
-                    echo "S3 Bucket Name: ${env.S3_BUCKET}"
-                    echo "=========================================="
+                    try {
+                        def config = envConfig()
+                        
+                        // Debug: Print config structure
+                        echo "Config type: ${config.getClass()}"
+                        echo "Config keys: ${config.keySet()}"
+                        
+                        env.NEXUS_URL = config.nexus.url
+                        env.AWS_DEFAULT_REGION = config.aws.region
+                        env.EUREKA_PORT = config.eureka.defaultPort
+                        env.BASE_AMI_ID = config.baseAmi.ubuntu2204
+                        env.SERVICE_NAME = config.servicename.obj1
+                        env.S3_BUCKET = config.s3.bucket
+                        
+                        echo "=========================================="
+                        echo "Loaded Configuration"
+                        echo "=========================================="
+                        echo "Nexus URL: ${env.NEXUS_URL}"
+                        echo "AWS Region: ${env.AWS_DEFAULT_REGION}"
+                        echo "Eureka Port: ${env.EUREKA_PORT}"
+                        echo "Base AMI: ${env.BASE_AMI_ID}"
+                        echo "Service Name: ${env.SERVICE_NAME}"
+                        echo "S3 Bucket Name: ${env.S3_BUCKET}"
+                        echo "=========================================="
+                    } catch (Exception e) {
+                        echo "ERROR loading configuration: ${e.getMessage()}"
+                        echo "Stack trace:"
+                        e.printStackTrace()
+                        throw e
+                    }
                 }
             }
         }
-
         stage('Set Version') {
             steps {
                 dir('eureka') {
