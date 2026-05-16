@@ -156,11 +156,21 @@ pipeline {
                             
                             echo ""
                             echo "Checking for git_branch variable in template:"
-                            grep -n "variable.*git_branch" eureka.pkr.hcl || echo "WARNING: git_branch variable not found in template!"
+                            grep "git_branch" eureka.pkr.hcl && echo "✓ git_branch variable found" || echo "✗ git_branch variable NOT found"
                             
                             echo ""
-                            echo "Validating packer template..."
-                            packer validate eureka.pkr.hcl || exit 1
+                            echo "Validating packer template with variables..."
+                            # Validate with variables to avoid "unset variable" errors
+                            packer validate \
+                                -var "service_version=${SERVICE_VERSION}" \
+                                -var "service_name=${SERVICE_NAME}" \
+                                -var "nexus_url=${NEXUS_URL}" \
+                                -var "eureka_port=${EUREKA_PORT}" \
+                                -var "source_ami=${BASE_AMI_ID}" \
+                                -var "git_branch=${GIT_BRANCH}" \
+                                eureka.pkr.hcl
+                            
+                            echo "✓ Template validation passed"
                         '''
                         
                         // Build the AMI
