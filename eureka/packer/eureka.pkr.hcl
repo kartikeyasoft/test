@@ -16,8 +16,8 @@ variable "service_name" {
 }
 
 variable "git_branch" {
-  type    = string
-  default = "master"
+  type        = string
+  default     = "master"
   description = "Git branch being built"
 }
 
@@ -30,9 +30,8 @@ variable "source_ami" {
   type        = string
 }
 
-
 variable "nexus_url" {
-  type    = string 
+  type = string
 }
 
 variable "eureka_port" {
@@ -41,11 +40,18 @@ variable "eureka_port" {
 }
 
 source "amazon-ebs" "eureka" {
-  ami_name = "myapp-eureka-${var.service_version}-${formatdate("YYYYMMDD-HHmmss", timestamp())}"
+  ami_name        = "myapp-eureka-${var.service_version}-${formatdate("YYYYMMDD-HHmmss", timestamp())}"
   instance_type   = "t3.micro"
   region          = "us-east-1"
   source_ami      = var.source_ami
   ssh_username    = "ubuntu"
+  
+  tags = {
+    Name    = "eureka-ami-${var.service_version}"
+    Service = "eureka"
+    Branch  = var.git_branch
+    BuiltBy = "Jenkins"
+  }
 }
 
 build {
@@ -59,11 +65,5 @@ build {
       "NEXUS_URL=${var.nexus_url}",
       "EUREKA_PORT=${var.eureka_port}"
     ]
-  }
-  tags = {
-    Name = "eureka-ami-${var.service_version}"
-    Service = "eureka"
-    Branch = var.git_branch
-    BuiltBy = "Jenkins"
   }
 }
