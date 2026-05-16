@@ -15,6 +15,12 @@ variable "service_name" {
   type = string
 }
 
+variable "git_branch" {
+  type    = string
+  default = "master"
+  description = "Git branch being built"
+}
+
 variable "service_version" {
   type = string
 }
@@ -35,7 +41,7 @@ variable "eureka_port" {
 }
 
 source "amazon-ebs" "eureka" {
-  ami_name        = "myapp-${var.service_name}-v${var.service_version}"
+  ami_name = "myapp-eureka-${var.service_version}-${formatdate("YYYYMMDD-HHmmss", timestamp())}"
   instance_type   = "t3.micro"
   region          = "us-east-1"
   source_ami      = var.source_ami
@@ -53,5 +59,11 @@ build {
       "NEXUS_URL=${var.nexus_url}",
       "EUREKA_PORT=${var.eureka_port}"
     ]
+  }
+  tags = {
+    Name = "eureka-ami-${var.service_version}"
+    Service = "eureka"
+    Branch = var.git_branch
+    BuiltBy = "Jenkins"
   }
 }
