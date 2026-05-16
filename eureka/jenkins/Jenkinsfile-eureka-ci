@@ -45,7 +45,7 @@ pipeline {
                     // Simple branch to environment mapping
                     if (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') {
                         env.TARGET_ENV = 'prod'
-                        env.AUTO_DEPLOY = 'false'  // No auto-deploy for production
+                        env.AUTO_DEPLOY = 'false'
                     } else if (env.BUILD_BRANCH == 'qa') {
                         env.TARGET_ENV = 'qa'
                         env.AUTO_DEPLOY = 'true'
@@ -145,36 +145,57 @@ pipeline {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 script {
-                    withEnv([
-                        "SERVICE_VERSION=${env.SERVICE_VERSION}",
-                        "SERVICE_NAME=${env.SERVICE_NAME}",
-                        "NEXUS_URL=${env.NEXUS_URL}",
-                        "EUREKA_PORT=${env.EUREKA_PORT}",
-                        "BASE_AMI_ID=${env.BASE_AMI_ID}",
-                        "GIT_BRANCH=${env.BUILD_BRANCH}",
-                        "GIT_COMMIT=${env.GIT_COMMIT}"
-                    ]) {
-                        dir('eureka/packer') {
-                            sh '''
-                                packer init eureka.pkr.hcl
-                                packer build \
-                                    -var "service_version=${SERVICE_VERSION}" \
-                                    -var "service_name=${SERVICE_NAME}" \
-                                    -var "nexus_url=${NEXUS_URL}" \
-                                    -var "eureka_port=${EUREKA_PORT}" \
-                                    -var "source_ami=${BASE_AMI_ID}" \
-                                    -var "git_branch=${GIT_BRANCH}" \
-                                    eureka.pkr.hcl 2>&1 | tee build-output.txt
-                                
-                                AMI_ID=$(grep -oE 'ami-[a-f0-9]{17}' build-output.txt | tail -1)
-                                echo "AMI_ID=$AMI_ID" > ami.properties
-                            '''
+                    // Ensure we're in the right directory
+                    dir('eureka/packer') {
+                        // First, verify packer template exists and variables are defined
+                        sh '''
+                            echo "=== Packer Template Validation ==="
+                            echo "Current directory: $(pwd)"
+                            echo "Files in directory:"
+                            ls -la
                             
-                            script {
-                                def amiProps = readFile('ami.properties')
-                                env.AMI_ID = amiProps.split('=')[1].trim()
-                                echo "✅ AMI Created: ${env.AMI_ID}"
-                            }
+                            echo ""
+                            echo "Checking for git_branch variable in template:"
+                            grep -n "variable.*git_branch" eureka.pkr.hcl || echo "WARNING: git_branch variable not found in template!"
+                            
+                            echo ""
+                            echo "Validating packer template..."
+                            packer validate eureka.pkr.hcl || exit 1
+                        '''
+                        
+                        // Build the AMI
+                        sh '''
+                            packer init eureka.pkr.hcl
+                            
+                            packer build \
+                                -var "service_version=${SERVICE_VERSION}" \
+                                -var "service_name=${SERVICE_NAME}" \
+                                -var "nexus_url=${NEXUS_URL}" \
+                                -var "eureka_port=${EUREKA_PORT}" \
+                                -var "source_ami=${BASE_AMI_ID}" \
+                                -var "git_branch=${GIT_BRANCH}" \
+                                eureka.pkr.hcl 2>&1 | tee build-output.txt
+                            
+                            # Extract AMI ID more reliably
+                            AMI_ID=$(grep -E 'us-east-1: ami-[a-f0-9]{17}' build-output.txt | tail -1 | grep -oE 'ami-[a-f0-9]{17}' || \
+                                     grep -E 'AMI: ami-[a-f0-9]{17}' build-output.txt | tail -1 | grep -oE 'ami-[a-f0-9]{17}' || \
+                                     grep -oE 'ami-[a-f0-9]{17}' build-output.txt | tail -1)
+                            
+                            if [ -z "$AMI_ID" ]; then
+                                echo "ERROR: Failed to extract AMI ID from build output"
+                                echo "Last 20 lines of build output:"
+                                tail -20 build-output.txt
+                                exit 1
+                            fi
+                            
+                            echo "AMI_ID=$AMI_ID" > ami.properties
+                            echo "Successfully created AMI: $AMI_ID"
+                        '''
+                        
+                        script {
+                            def amiProps = readFile('ami.properties')
+                            env.AMI_ID = amiProps.split('=')[1].trim()
+                            echo "✅ AMI Created: ${env.AMI_ID}"
                         }
                     }
                 }
@@ -182,7 +203,7 @@ pipeline {
         }
 
         stage('Store AMI Info') {
-            when { expression { env.AMI_ID != null } }
+            when { expression { env.AMI_ID != null && env.AMI_ID != '' } }
             steps {
                 script {
                     sh """
@@ -208,7 +229,8 @@ pipeline {
                 expression { 
                     params.ACTION == 'build-and-deploy' && 
                     env.AUTO_DEPLOY == 'true' &&
-                    env.AMI_ID != null
+                    env.AMI_ID != null &&
+                    env.AMI_ID != ''
                 } 
             }
             steps {
@@ -231,7 +253,8 @@ pipeline {
                 expression { 
                     params.ACTION == 'build-and-deploy' && 
                     env.AUTO_DEPLOY == 'false' &&
-                    env.AMI_ID != null
+                    env.AMI_ID != null &&
+                    env.AMI_ID != ''
                 } 
             }
             steps {
@@ -266,6 +289,17 @@ pipeline {
             echo "=========================================="
             echo "❌ CI Failed for branch ${env.BUILD_BRANCH}"
             echo "=========================================="
+            script {
+                // Print packer output for debugging if it exists
+                dir('eureka/packer') {
+                    sh '''
+                        if [ -f build-output.txt ]; then
+                            echo "=== Last 50 lines of Packer build output ==="
+                            tail -50 build-output.txt
+                        fi
+                    '''
+                }
+            }
         }
     }
 }
