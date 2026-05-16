@@ -11,14 +11,41 @@ packer {
   }
 }
 
-variable "service_name"    { type = string }
-variable "git_branch"      { type = string, default = "dev" }
-variable "service_version" { type = string }
-variable "source_ami"      { type = string }
-variable "nexus_url"       { type = string }
-variable "eureka_port"     { type = string, default = "8761" }
-variable "git_commit"      { type = string, default = "unknown" }
-variable "build_number"    { type = string, default = "local" }
+variable "service_name" {
+  type = string
+}
+
+variable "git_branch" {
+  type    = string
+  default = "dev"
+}
+
+variable "service_version" {
+  type = string
+}
+
+variable "source_ami" {
+  type = string
+}
+
+variable "nexus_url" {
+  type = string
+}
+
+variable "eureka_port" {
+  type    = string
+  default = "8761"
+}
+
+variable "git_commit" {
+  type    = string
+  default = "unknown"
+}
+
+variable "build_number" {
+  type    = string
+  default = "local"
+}
 
 locals {
   # Clean branch name by replacing special characters
