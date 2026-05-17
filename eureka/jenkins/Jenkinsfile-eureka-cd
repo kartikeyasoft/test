@@ -14,38 +14,8 @@ pipeline {
         AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
     }
 
-        stage('Checkout Infrastructure Code') {
-            steps {
-                script {
-                    // Add timestamp
-                    env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
-                    
-                    def infraRepo = 'https://github.com/kartikeyasoft/test.git'
-                    def infraBranch = params.BRANCH
-                    
-                    echo "=========================================="
-                    echo "Checking out infrastructure code"
-                    echo "=========================================="
-                    echo "Repository: ${infraRepo}"
-                    echo "Branch: ${infraBranch}"
-                    echo "Timestamp: ${env.TIMESTAMP}"
-                    
-                    checkout([$class: 'GitSCM',
-                        branches: [[name: infraBranch]],
-                        userRemoteConfigs: [[url: infraRepo]],
-                        extensions: [[$class: 'CleanCheckout']]
-                    ])
-                    
-                    env.INFRA_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    env.INFRA_BRANCH = infraBranch
-                    
-                    echo "✅ Checkout complete - Commit: ${env.INFRA_COMMIT}"
-                    echo "=========================================="
-                }
-            }
-        }
-
-        stage('Load Configuration') {
+    stages {
+        stage('Load Environment Configuration') {  // ← CHANGED: Match the name
             steps {
                 script {
                     // Get branch configuration from shared library
@@ -75,21 +45,58 @@ pipeline {
                     
                     // AMI ID (use provided or fetch from SSM later)
                     env.AMI_ID = params.AMI_ID
+                    env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
                     
                     echo "=========================================="
                     echo "Eureka CD Pipeline - Branch: ${params.BRANCH}"
                     echo "=========================================="
-                    echo "Infrastructure Branch: ${env.INFRA_BRANCH}"
-                    echo "Infrastructure Commit: ${env.INFRA_COMMIT}"
                     echo "Target Environment: ${env.TARGET_ENV}"
                     echo "Action: ${params.ACTION}"
                     echo "Deploy Strategy: ${env.DEPLOY_STRATEGY}"
-                    echo "VPC ID: ${env.VPC_ID}"
-                    echo "Subnet ID: ${env.SUBNET_ID}"
-                    echo "Instance Type: ${env.INSTANCE_TYPE}"
-                    echo "Service Name: ${env.SERVICE_NAME}"
-                    echo "S3 Bucket: ${env.S3_BUCKET}"
-                    echo "AMI ID: ${env.AMI_ID ?: 'Will fetch from SSM'}"
+                    echo "Auto Deploy: ${env.AUTO_DEPLOY}"
+                    echo "Require Approval: ${env.REQUIRE_APPROVAL}"
+                    echo ""
+                    echo "VPC Configuration:"
+                    echo "  VPC CIDR: ${env.VPC_CIDR}"
+                    echo "  VPC ID: ${env.VPC_ID}"
+                    echo "  Subnet ID: ${env.SUBNET_ID}"
+                    echo "  Instance Type: ${env.INSTANCE_TYPE}"
+                    echo ""
+                    echo "Service Configuration:"
+                    echo "  Service Name: ${env.SERVICE_NAME}"
+                    echo "  Eureka Port: ${env.EUREKA_PORT}"
+                    echo "  SSM Path: ${env.SSM_PATH}"
+                    echo "  S3 Bucket: ${env.S3_BUCKET}"
+                    echo ""
+                    echo "AMI ID: ${env.AMI_ID ?: 'Will fetch from SSM based on branch'}"
+                    echo "Timestamp: ${env.TIMESTAMP}"
+                    echo "=========================================="
+                }
+            }
+        }
+
+        stage('Checkout Infrastructure Code') {
+            steps {
+                script {
+                    def infraRepo = 'https://github.com/kartikeyasoft/micro.git'
+                    def infraBranch = params.BRANCH
+                    
+                    echo "=========================================="
+                    echo "Checking out infrastructure code"
+                    echo "=========================================="
+                    echo "Repository: ${infraRepo}"
+                    echo "Branch: ${infraBranch}"
+                    
+                    checkout([$class: 'GitSCM',
+                        branches: [[name: infraBranch]],
+                        userRemoteConfigs: [[url: infraRepo]],
+                        extensions: [[$class: 'CleanCheckout']]
+                    ])
+                    
+                    env.INFRA_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.INFRA_BRANCH = infraBranch
+                    
+                    echo "✅ Checkout complete - Commit: ${env.INFRA_COMMIT}"
                     echo "=========================================="
                 }
             }
@@ -154,7 +161,6 @@ pipeline {
                         error "AMI_ID is required for ${params.ACTION} action"
                     }
                     
-                    // Verify AMI exists
                     def amiState = sh(script: """
                         aws ec2 describe-images \
                             --image-ids ${env.AMI_ID} \
@@ -257,17 +263,33 @@ pipeline {
                                     --value "${env.AMI_ID}" \
                                     --type "String" \
                                     --overwrite || true
+                                
+                                aws ssm put-parameter \
+                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/branch" \
+                                    --value "${env.BUILD_BRANCH}" \
+                                    --type "String" \
+                                    --overwrite || true
+                                
+                                aws ssm put-parameter \
+                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deployed-at" \
+                                    --value "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                                    --type "String" \
+                                    --overwrite || true
                             """
                             
                             echo "=========================================="
                             echo "✅ Deployment Complete!"
                             echo "=========================================="
                             echo "Environment: ${env.TARGET_ENV}"
+                            echo "Branch: ${env.BUILD_BRANCH}"
                             echo "Service: ${env.SERVICE_NAME}"
-                            echo "IP: ${private_ip}"
+                            echo "Private IP: ${private_ip}"
                             echo "Port: ${env.EUREKA_PORT}"
                             echo "URL: http://${private_ip}:${env.EUREKA_PORT}/eureka/"
+                            echo "AMI ID: ${env.AMI_ID}"
                             echo "=========================================="
+                        } else {
+                            error "Failed to get instance IP address for ${env.TARGET_ENV}"
                         }
                     }
                 }
@@ -282,6 +304,8 @@ pipeline {
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ip" 2>/dev/null || true
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/port" 2>/dev/null || true
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ami" 2>/dev/null || true
+                        aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/branch" 2>/dev/null || true
+                        aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deployed-at" 2>/dev/null || true
                     """
                 }
                 dir("eureka/terraform/${env.TARGET_ENV}") {
@@ -293,10 +317,18 @@ pipeline {
 
     post {
         success {
+            echo "=========================================="
             echo "✅ Eureka ${params.ACTION} for ${params.BRANCH} completed!"
+            echo "=========================================="
+            echo "Environment: ${env.TARGET_ENV}"
+            echo "AMI ID: ${env.AMI_ID}"
+            echo "Service: ${env.SERVICE_NAME}"
+            echo "=========================================="
         }
         failure {
+            echo "=========================================="
             echo "❌ Eureka ${params.ACTION} for ${params.BRANCH} failed!"
+            echo "=========================================="
         }
     }
 }
