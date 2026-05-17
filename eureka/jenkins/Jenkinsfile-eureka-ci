@@ -5,7 +5,7 @@ pipeline {
 
     parameters {
         choice(name: 'ACTION', choices: ['build', 'build-and-deploy'], description: 'Action to perform')
-        string(name: 'BRANCH', defaultValue: 'dev', description: 'Git branch (dev/qa/master/main)')
+        choice(name: 'BRANCH', choices: ['dev', 'qa', 'master', 'main'], description: 'Git branch')
     }
 
     tools {
