@@ -21,51 +21,67 @@ pipeline {
                     env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
                     def config = envConfig()
                     
-                    // Branch to environment mapping
-                    if (params.BRANCH == 'main' || params.BRANCH == 'master') {
-                        env.TARGET_ENV = 'prod'
-                        env.REQUIRE_APPROVAL = 'true'
-                        env.INSTANCE_TYPE = 't3.medium'
-                        env.KEY_NAME = 'ksansible-prod'
-                    } else if (params.BRANCH == 'qa') {
-                        env.TARGET_ENV = 'qa'
-                        env.REQUIRE_APPROVAL = 'false'
-                        env.INSTANCE_TYPE = 't3.micro'
-                        env.KEY_NAME = 'ksansible'
-                    } else {
-                        env.TARGET_ENV = 'dev'
-                        env.REQUIRE_APPROVAL = 'false'
-                        env.INSTANCE_TYPE = 't3.micro'
-                        env.KEY_NAME = 'ksansible'
-                    }
-                    
-                    env.AWS_DEFAULT_REGION = config.aws.region
-                    env.SERVICE_NAME = 'eureka'
-                    env.EUREKA_PORT = config.eureka.defaultPort
-                    
-                    // Environment-specific VPC configuration
+                    // Single source of truth for all environment configurations
                     def envConfigs = [
                         dev: [
-                            subnet_id: 'subnet-076bd99dde1330498',
+                            subnet_id: 'subnet-0c01b25666d64bc87',
                             vpc_id: 'vpc-0310386fea2f2ce82',
-                            ssm_path: '/exam/dev'
+                            security_group_id: 'sg-0b454c1ede4281678',
+                            instance_type: 't3.micro',
+                            key_name: 'ksansible',
+                            ssm_path: '/exam/dev',
+                            require_approval: false
                         ],
                         qa: [
                             subnet_id: 'subnet-0aa31e769c8f4d73e',
                             vpc_id: 'vpc-0cb7deb47a6bfa727',
-                            ssm_path: '/exam/qa'
+                            security_group_id: 'sg-04334807773be2bc3',
+                            instance_type: 't3.micro',
+                            key_name: 'ksansible',
+                            ssm_path: '/exam/qa',
+                            require_approval: false
                         ],
                         prod: [
-                            subnet_id: 'subnet-09c74646d4a4c2794',
+                            subnet_id: 'subnet-08a05790df4d2abc6',
                             vpc_id: 'vpc-06cf33d3bcdcf4be9',
-                            ssm_path: '/exam/prod'
+                            security_group_id: 'sg-08c12a5119c33584d',
+                            instance_type: 't3.medium',
+                            key_name: 'ksansible-prod',
+                            ssm_path: '/exam/prod',
+                            require_approval: true
                         ]
                     ]
                     
-                    def envData = envConfigs[env.TARGET_ENV]
+                    // Determine target environment based on branch
+                    def targetEnv = 'dev'
+                    if (params.BRANCH == 'main' || params.BRANCH == 'master') {
+                        targetEnv = 'prod'
+                    } else if (params.BRANCH == 'qa') {
+                        targetEnv = 'qa'
+                    } else {
+                        targetEnv = 'dev'
+                    }
+                    
+                    def envData = envConfigs[targetEnv]
+                    
+                    // Set environment variables
+                    env.TARGET_ENV = targetEnv
+                    env.AWS_DEFAULT_REGION = config.aws.region
+                    env.SERVICE_NAME = 'eureka'
+                    env.EUREKA_PORT = config.eureka.defaultPort
+                    
+                    // Network configuration
                     env.SUBNET_ID = envData.subnet_id
                     env.VPC_ID = envData.vpc_id
+                    env.SECURITY_GROUP_ID = envData.security_group_id
+                    
+                    // Instance configuration
+                    env.INSTANCE_TYPE = envData.instance_type
+                    env.KEY_NAME = envData.key_name
+                    
+                    // Pipeline configuration
                     env.SSM_PATH = envData.ssm_path
+                    env.REQUIRE_APPROVAL = envData.require_approval.toString()
                     env.AMI_ID = params.AMI_ID
                     env.BUILD_BRANCH = params.BRANCH
                     
@@ -74,7 +90,22 @@ pipeline {
                     echo "=========================================="
                     echo "Target Environment: ${env.TARGET_ENV}"
                     echo "Action: ${params.ACTION}"
-                    echo "Instance Type: ${env.INSTANCE_TYPE}"
+                    echo "Require Approval: ${env.REQUIRE_APPROVAL}"
+                    echo ""
+                    echo "Network Configuration:"
+                    echo "  Subnet ID: ${env.SUBNET_ID}"
+                    echo "  VPC ID: ${env.VPC_ID}"
+                    echo "  Security Group ID: ${env.SECURITY_GROUP_ID}"
+                    echo ""
+                    echo "Instance Configuration:"
+                    echo "  Instance Type: ${env.INSTANCE_TYPE}"
+                    echo "  Key Name: ${env.KEY_NAME}"
+                    echo ""
+                    echo "Service Configuration:"
+                    echo "  Service Name: ${env.SERVICE_NAME}"
+                    echo "  Eureka Port: ${env.EUREKA_PORT}"
+                    echo "  SSM Path: ${env.SSM_PATH}"
+                    echo ""
                     echo "AMI ID: ${env.AMI_ID ?: 'Will fetch from SSM'}"
                     echo "=========================================="
                 }
@@ -84,29 +115,23 @@ pipeline {
         stage('Checkout Infrastructure Code') {
             steps {
                 script {
-                    // CRITICAL FIX: Always checkout Terraform from master branch
-                    // This ensures infrastructure code is consistent across all environments
                     def infraRepo = 'https://github.com/kartikeyasoft/test.git'
-                    def infraBranch = 'master'  // ← FIXED: Always use master
+                    def infraBranch = 'master'
                     
                     echo "=========================================="
                     echo "Checking out infrastructure code"
                     echo "=========================================="
                     echo "Repository: ${infraRepo}"
-                    echo "Branch: ${infraBranch} (ALWAYS from master for consistency)"
+                    echo "Branch: ${infraBranch} (ALWAYS from master)"
                     echo "Deploying application from branch: ${params.BRANCH}"
                     echo "=========================================="
                     
-                    // Clean checkout
                     deleteDir()
-                    
                     git url: infraRepo, branch: infraBranch
                     
                     env.INFRA_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                     
-                    echo "✅ Infrastructure code checked out"
-                    echo "   Commit: ${env.INFRA_COMMIT}"
-                    echo "   Branch: ${infraBranch}"
+                    echo "✅ Infrastructure code checked out - Commit: ${env.INFRA_COMMIT}"
                     echo "=========================================="
                 }
             }
@@ -124,7 +149,7 @@ pipeline {
                     ok: "Deploy",
                     parameters: [
                         string(name: 'APPROVER', defaultValue: "${env.BUILD_USER_ID ?: 'Unknown'}", description: 'Approver name'),
-                        text(name: 'DEPLOY_NOTES', defaultValue: "Deploying ${env.SERVICE_NAME} from ${params.BRANCH} branch using infrastructure from master", description: 'Deployment notes')
+                        text(name: 'DEPLOY_NOTES', defaultValue: "Deploying ${env.SERVICE_NAME} from ${params.BRANCH} branch", description: 'Deployment notes')
                     ]
             }
         }
@@ -153,7 +178,7 @@ pipeline {
                         ❌ No Eureka AMI found for branch: ${params.BRANCH}
                         
                         Please run eureka-ci pipeline for ${params.BRANCH} branch first.
-                        The CI pipeline stores AMI at: /eureka/${params.BRANCH}/latest-ami
+                        Expected SSM path: /eureka/${params.BRANCH}/latest-ami
                         """
                     }
                     
@@ -190,9 +215,8 @@ pipeline {
 
         stage('Terraform Init') {
             steps {
-                dir("eureka/terraform/${env.TARGET_ENV}") {
+                dir("eureka/terraform") {
                     sh """
-                        cp ../*.tf . 2>/dev/null || true
                         terraform init
                     """
                 }
@@ -202,15 +226,18 @@ pipeline {
         stage('Terraform Plan') {
             when { expression { params.ACTION == 'plan' } }
             steps {
-                dir("eureka/terraform/${env.TARGET_ENV}") {
+                dir("eureka/terraform") {
                     sh """
                         terraform plan \
                             -var="ami_id=${env.AMI_ID}" \
+                            -var="service_name=${env.SERVICE_NAME}" \
+                            -var="branch=${params.BRANCH}" \
                             -var="aws_region=${env.AWS_DEFAULT_REGION}" \
                             -var="eureka_port=${env.EUREKA_PORT}" \
                             -var="environment=${env.TARGET_ENV}" \
                             -var="subnet_id=${env.SUBNET_ID}" \
                             -var="vpc_id=${env.VPC_ID}" \
+                            -var="security_group_id=${env.SECURITY_GROUP_ID}" \
                             -var="instance_type=${env.INSTANCE_TYPE}" \
                             -var="key_name=${env.KEY_NAME}"
                     """
@@ -221,15 +248,18 @@ pipeline {
         stage('Terraform Apply') {
             when { expression { params.ACTION == 'apply' } }
             steps {
-                dir("eureka/terraform/${env.TARGET_ENV}") {
+                dir("eureka/terraform") {
                     sh """
                         terraform apply -auto-approve \
                             -var="ami_id=${env.AMI_ID}" \
+                            -var="service_name=${env.SERVICE_NAME}" \
+                            -var="branch=${params.BRANCH}" \
                             -var="aws_region=${env.AWS_DEFAULT_REGION}" \
                             -var="eureka_port=${env.EUREKA_PORT}" \
                             -var="environment=${env.TARGET_ENV}" \
                             -var="subnet_id=${env.SUBNET_ID}" \
                             -var="vpc_id=${env.VPC_ID}" \
+                            -var="security_group_id=${env.SECURITY_GROUP_ID}" \
                             -var="instance_type=${env.INSTANCE_TYPE}" \
                             -var="key_name=${env.KEY_NAME}"
                     """
@@ -241,64 +271,63 @@ pipeline {
             when { expression { params.ACTION == 'apply' } }
             steps {
                 script {
-                    dir("eureka/terraform/${env.TARGET_ENV}") {
-                        sh "sleep 10"
+                    sh "sleep 10"
+                    
+                    def private_ip = sh(script: """
+                        aws ec2 describe-instances \
+                            --filters "Name=tag:Branch,Values=${params.BRANCH}" \
+                                      "Name=tag:Service,Values=${env.SERVICE_NAME}" \
+                                      "Name=instance-state-name,Values=running" \
+                            --query 'Reservations[0].Instances[0].PrivateIpAddress' \
+                            --region ${env.AWS_DEFAULT_REGION} \
+                            --output text
+                    """, returnStdout: true).trim()
+                    
+                    if (private_ip && private_ip != 'None') {
+                        def currentTime = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
                         
-                        def private_ip = sh(script: """
-                            aws ec2 describe-instances \
-                                --filters "Name=tag:Branch,Values=${params.BRANCH}" \
-                                          "Name=tag:Service,Values=${env.SERVICE_NAME}" \
-                                          "Name=instance-state-name,Values=running" \
-                                --query 'Reservations[0].Instances[0].PrivateIpAddress' \
-                                --region ${env.AWS_DEFAULT_REGION} \
-                                --output text
-                        """, returnStdout: true).trim()
+                        sh """
+                            aws ssm put-parameter \
+                                --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ip" \
+                                --value "${private_ip}" \
+                                --type "String" \
+                                --overwrite || true
+                            
+                            aws ssm put-parameter \
+                                --name "${env.SSM_PATH}/${env.SERVICE_NAME}/port" \
+                                --value "${env.EUREKA_PORT}" \
+                                --type "String" \
+                                --overwrite || true
+                            
+                            aws ssm put-parameter \
+                                --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ami" \
+                                --value "${env.AMI_ID}" \
+                                --type "String" \
+                                --overwrite || true
+                            
+                            aws ssm put-parameter \
+                                --name "${env.SSM_PATH}/${env.SERVICE_NAME}/branch" \
+                                --value "${params.BRANCH}" \
+                                --type "String" \
+                                --overwrite || true
+                            
+                            aws ssm put-parameter \
+                                --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deployed-at" \
+                                --value "${currentTime}" \
+                                --type "String" \
+                                --overwrite || true
+                        """
                         
-                        if (private_ip && private_ip != 'None') {
-                            def currentTime = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
-                            
-                            sh """
-                                aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ip" \
-                                    --value "${private_ip}" \
-                                    --type "String" \
-                                    --overwrite || true
-                                
-                                aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/port" \
-                                    --value "${env.EUREKA_PORT}" \
-                                    --type "String" \
-                                    --overwrite || true
-                                
-                                aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ami" \
-                                    --value "${env.AMI_ID}" \
-                                    --type "String" \
-                                    --overwrite || true
-                                
-                                aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/branch" \
-                                    --value "${params.BRANCH}" \
-                                    --type "String" \
-                                    --overwrite || true
-                                
-                                aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deployed-at" \
-                                    --value "${currentTime}" \
-                                    --type "String" \
-                                    --overwrite || true
-                            """
-                            
-                            echo "=========================================="
-                            echo "✅ Deployment Complete!"
-                            echo "=========================================="
-                            echo "Application Branch: ${params.BRANCH}"
-                            echo "Infrastructure Branch: master (from checkout)"
-                            echo "Environment: ${env.TARGET_ENV}"
-                            echo "Private IP: ${private_ip}"
-                            echo "URL: http://${private_ip}:${env.EUREKA_PORT}/eureka/"
-                            echo "=========================================="
-                        }
+                        echo "=========================================="
+                        echo "✅ Deployment Complete!"
+                        echo "=========================================="
+                        echo "Application Branch: ${params.BRANCH}"
+                        echo "Environment: ${env.TARGET_ENV}"
+                        echo "Service: ${env.SERVICE_NAME}"
+                        echo "Private IP: ${private_ip}"
+                        echo "Port: ${env.EUREKA_PORT}"
+                        echo "URL: http://${private_ip}:${env.EUREKA_PORT}/eureka/"
+                        echo "=========================================="
                     }
                 }
             }
@@ -316,8 +345,21 @@ pipeline {
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deployed-at" 2>/dev/null || true
                     """
                 }
-                dir("eureka/terraform/${env.TARGET_ENV}") {
-                    sh "terraform destroy -auto-approve"
+                dir("eureka/terraform") {
+                    sh """
+                        terraform destroy -auto-approve \
+                            -var="ami_id=${env.AMI_ID}" \
+                            -var="service_name=${env.SERVICE_NAME}" \
+                            -var="branch=${params.BRANCH}" \
+                            -var="aws_region=${env.AWS_DEFAULT_REGION}" \
+                            -var="eureka_port=${env.EUREKA_PORT}" \
+                            -var="environment=${env.TARGET_ENV}" \
+                            -var="subnet_id=${env.SUBNET_ID}" \
+                            -var="vpc_id=${env.VPC_ID}" \
+                            -var="security_group_id=${env.SECURITY_GROUP_ID}" \
+                            -var="instance_type=${env.INSTANCE_TYPE}" \
+                            -var="key_name=${env.KEY_NAME}"
+                    """
                 }
             }
         }
@@ -330,9 +372,9 @@ pipeline {
                 echo "✅ CD Success for ${params.BRANCH}!"
                 echo "=========================================="
                 if (params.ACTION == 'apply') {
-                    echo "Deployed application from branch: ${params.BRANCH}"
-                    echo "Using infrastructure from: master"
+                    echo "Branch: ${params.BRANCH}"
                     echo "Environment: ${env.TARGET_ENV}"
+                    echo "AMI ID: ${env.AMI_ID}"
                 }
                 echo "=========================================="
             }
