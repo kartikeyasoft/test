@@ -14,13 +14,13 @@ pipeline {
         AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
     }
 
-    stages {
         stage('Checkout Infrastructure Code') {
             steps {
                 script {
-                    // Use the BRANCH parameter to checkout the correct branch
-                    // This overrides any job configuration
-                    def infraRepo = 'https://github.com/kartikeyasoft/micro.git'
+                    // Add timestamp
+                    env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
+                    
+                    def infraRepo = 'https://github.com/kartikeyasoft/test.git'
                     def infraBranch = params.BRANCH
                     
                     echo "=========================================="
@@ -28,11 +28,12 @@ pipeline {
                     echo "=========================================="
                     echo "Repository: ${infraRepo}"
                     echo "Branch: ${infraBranch}"
+                    echo "Timestamp: ${env.TIMESTAMP}"
                     
                     checkout([$class: 'GitSCM',
                         branches: [[name: infraBranch]],
                         userRemoteConfigs: [[url: infraRepo]],
-                        extensions: []
+                        extensions: [[$class: 'CleanCheckout']]
                     ])
                     
                     env.INFRA_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
