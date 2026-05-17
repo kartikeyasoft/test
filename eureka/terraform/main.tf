@@ -22,7 +22,7 @@ data "aws_ami" "eureka" {
 
   filter {
     name   = "name"
-    values = ["myapp-eureka-v*"]
+    values = ["myapp-eureka-*${var.branch}*"]
   }
 }
 
@@ -33,8 +33,8 @@ resource "aws_security_group" "eureka" {
   vpc_id      = var.vpc_id
 
   ingress {
-    from_port   = 8761
-    to_port     = 8761
+    from_port   = var.eureka_port
+    to_port     = var.eureka_port
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
     description = "Eureka dashboard"
@@ -58,7 +58,9 @@ resource "aws_security_group" "eureka" {
   tags = {
     Name        = "eureka-sg-${var.environment}"
     Environment = var.environment
-    Service     = "eureka"
+    Service     = var.service_name
+    Branch      = var.branch
+    ManagedBy   = "terraform"
   }
 }
 
@@ -71,13 +73,43 @@ resource "aws_instance" "eureka" {
   key_name               = var.key_name
 
   tags = {
-    Name        = "eureka-${var.environment}"
+    Name        = "${var.service_name}-${var.environment}"
     Environment = var.environment
-    Service     = "eureka"
+    Service     = var.service_name
+    Branch      = var.branch
     ManagedBy   = "terraform"
   }
 
   lifecycle {
     create_before_destroy = true
   }
+}
+
+# Optional: Elastic IP
+resource "aws_eip" "eureka" {
+  count = var.assign_eip ? 1 : 0
+  instance = aws_instance.eureka.id
+  domain   = "vpc"
+
+  tags = {
+    Name        = "${var.service_name}-eip-${var.environment}"
+    Environment = var.environment
+    Service     = var.service_name
+  }
+}
+
+# Outputs
+output "eureka_private_ip" {
+  description = "Private IP of Eureka instance"
+  value       = aws_instance.eureka.private_ip
+}
+
+output "eureka_public_ip" {
+  description = "Public IP of Eureka instance"
+  value       = aws_instance.eureka.public_ip
+}
+
+output "eureka_ami" {
+  description = "AMI ID used for the instance"
+  value       = aws_instance.eureka.ami
 }

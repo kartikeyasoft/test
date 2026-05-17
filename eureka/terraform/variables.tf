@@ -7,13 +7,25 @@ variable "aws_region" {
 variable "environment" {
   description = "Environment name"
   type        = string
-  default     = "production"
+  default     = "dev"
 }
 
 variable "ami_id" {
-  description = "Eureka AMI ID (optional for destroy)"
+  description = "Eureka AMI ID (optional, will use latest if empty)"
   type        = string
-  default     = ""  # Make it optional with default
+  default     = ""
+}
+
+variable "service_name" {
+  description = "Name of the service"
+  type        = string
+  default     = "eureka"
+}
+
+variable "branch" {
+  description = "Git branch name"
+  type        = string
+  default     = "dev"
 }
 
 variable "instance_type" {
