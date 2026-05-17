@@ -28,50 +28,17 @@ data "aws_ami" "eureka" {
   }
 }
 
-# Create security group
-resource "aws_security_group" "eureka" {
-  name        = "eureka-sg-${var.environment}"
-  description = "Security group for Eureka service registry"
-  vpc_id      = var.vpc_id
-
-  ingress {
-    from_port   = var.eureka_port
-    to_port     = var.eureka_port
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "Eureka dashboard"
-  }
-
-  ingress {
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-    description = "SSH access"
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = {
-    Name        = "eureka-sg-${var.environment}"
-    Environment = var.environment
-    Service     = var.service_name
-    Branch      = var.branch
-    ManagedBy   = "terraform"
-  }
+# Use existing security group (no need to create)
+data "aws_security_group" "existing" {
+  id = var.security_group_id
 }
 
-# EC2 Instance
+# EC2 Instance (using existing security group)
 resource "aws_instance" "eureka" {
   ami                    = var.ami_id != "" ? var.ami_id : data.aws_ami.eureka.id
   instance_type          = var.instance_type
   subnet_id              = var.subnet_id
-  vpc_security_group_ids = [aws_security_group.eureka.id]
+  vpc_security_group_ids = [var.security_group_id]
   key_name               = var.key_name
 
   tags = {

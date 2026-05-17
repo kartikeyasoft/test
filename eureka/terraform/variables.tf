@@ -54,6 +54,12 @@ variable "vpc_id" {
   default     = ""
 }
 
+variable "security_group_id" {
+  description = "Existing security group ID"
+  type        = string
+  default     = ""
+}
+
 variable "key_name" {
   description = "SSH key pair name"
   type        = string
