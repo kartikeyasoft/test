@@ -1,3 +1,5 @@
+# eureka/terraform/variables.tf
+
 variable "aws_region" {
   description = "AWS region"
   type        = string
@@ -11,7 +13,7 @@ variable "environment" {
 }
 
 variable "ami_id" {
-  description = "Eureka AMI ID (optional, will use latest if empty)"
+  description = "Eureka AMI ID (optional for destroy)"
   type        = string
   default     = ""
 }
@@ -43,13 +45,13 @@ variable "eureka_port" {
 variable "subnet_id" {
   description = "Subnet ID for the instance"
   type        = string
-  default     = "subnet-0aa31e769c8f4d73e"
+  default     = ""
 }
 
 variable "vpc_id" {
   description = "VPC ID for security group"
   type        = string
-  default     = "vpc-0cb7deb47a6bfa727"
+  default     = ""
 }
 
 variable "key_name" {

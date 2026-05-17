@@ -1,3 +1,5 @@
+# eureka/terraform/main.tf
+
 terraform {
   required_version = ">= 1.0"
   required_providers {
@@ -85,31 +87,3 @@ resource "aws_instance" "eureka" {
   }
 }
 
-# Optional: Elastic IP
-resource "aws_eip" "eureka" {
-  count = var.assign_eip ? 1 : 0
-  instance = aws_instance.eureka.id
-  domain   = "vpc"
-
-  tags = {
-    Name        = "${var.service_name}-eip-${var.environment}"
-    Environment = var.environment
-    Service     = var.service_name
-  }
-}
-
-# Outputs
-output "eureka_private_ip" {
-  description = "Private IP of Eureka instance"
-  value       = aws_instance.eureka.private_ip
-}
-
-output "eureka_public_ip" {
-  description = "Public IP of Eureka instance"
-  value       = aws_instance.eureka.public_ip
-}
-
-output "eureka_ami" {
-  description = "AMI ID used for the instance"
-  value       = aws_instance.eureka.ami
-}
