@@ -5,7 +5,7 @@ pipeline {
 
     parameters {
         choice(name: 'ENVIRONMENT', choices: ['dev', 'qa', 'prod'], description: 'Target environment')
-        string(name: 'AMI_ID', defaultValue: '', description: 'Eureka AMI ID')
+        string(name: 'AMI_ID', defaultValue: '', description: 'Eureka AMI ID (leave empty to get latest from SSM)')
         choice(name: 'ACTION', choices: ['apply', 'destroy', 'plan'], description: 'Terraform action')
     }
 
@@ -19,31 +19,34 @@ pipeline {
             steps {
                 script {
                     // Get environment-specific config
-                    def envConfig = envConfig().getEnvConfig(params.ENVIRONMENT)
                     def globalConfig = envConfig()
+                    def envConfigData = globalConfig.getEnvConfig(params.ENVIRONMENT)
                     
                     env.AWS_DEFAULT_REGION = globalConfig.aws.region
                     env.EUREKA_PORT = globalConfig.eureka.defaultPort
+                    env.SERVICE_NAME = globalConfig.servicename.obj1
+                    env.S3_BUCKET = globalConfig.s3.bucket
                     env.AMI_ID = params.AMI_ID
                     env.TARGET_ENV = params.ENVIRONMENT
                     
                     // Environment-specific variables
-                    env.SUBNET_ID = envConfig.subnet_id
-                    env.VPC_ID = envConfig.vpc_id
-                    env.INSTANCE_TYPE = envConfig.instance_type
-                    env.SSM_PATH = envConfig.ssm_path
-                    env.VPC_CIDR = envConfig.vpc_cidr
+                    env.SUBNET_ID = envConfigData.subnet_id
+                    env.VPC_ID = envConfigData.vpc_id
+                    env.INSTANCE_TYPE = envConfigData.instance_type
+                    env.SSM_PATH = envConfigData.ssm_path
+                    env.VPC_CIDR = envConfigData.vpc_cidr
                     
                     echo "=========================================="
                     echo "Eureka CD Pipeline - ${params.ENVIRONMENT.toUpperCase()}"
                     echo "=========================================="
+                    echo "Service Name: ${env.SERVICE_NAME}"
                     echo "Environment: ${params.ENVIRONMENT}"
                     echo "Action: ${params.ACTION}"
                     echo "VPC CIDR: ${env.VPC_CIDR}"
                     echo "Instance Type: ${env.INSTANCE_TYPE}"
                     echo "Subnet ID: ${env.SUBNET_ID}"
                     echo "SSM Path: ${env.SSM_PATH}"
-                    echo "AMI ID: ${env.AMI_ID ?: 'Will use latest'}"
+                    echo "AMI ID: ${env.AMI_ID ?: 'Will get latest from SSM'}"
                     echo "=========================================="
                 }
             }
@@ -55,44 +58,75 @@ pipeline {
             }
         }
 
-        stage('Get AMI ID') {
-            when { expression { params.ACTION in ['apply', 'plan'] } }
+        stage('Get AMI ID from SSM') {
+            when { expression { params.ACTION in ['apply', 'plan'] && (!env.AMI_ID || env.AMI_ID == '') } }
             steps {
                 script {
-                    def amiId = params.AMI_ID
+                    // Map environment to CI branch pattern
+                    def branch = params.ENVIRONMENT == 'prod' ? 'master' : params.ENVIRONMENT
+                    
+                    echo "Getting latest AMI for branch: ${branch}"
+                    
+                    // Get AMI ID from SSM (as stored by CI pipeline)
+                    def amiId = sh(script: """
+                        aws ssm get-parameter \
+                            --name "/eureka/${branch}/latest-ami" \
+                            --region ${env.AWS_DEFAULT_REGION} \
+                            --query "Parameter.Value" \
+                            --output text 2>/dev/null || echo ""
+                    """, returnStdout: true).trim()
                     
                     if (!amiId || amiId == '') {
-                        // Get latest generic AMI (no environment tag in CI)
-                        amiId = sh(script: """
-                            aws ec2 describe-images \
-                                --region ${env.AWS_DEFAULT_REGION} \
-                                --owners self \
-                                --filters "Name=name,Values=eureka-v*" \
-                                --query 'Images | sort_by(@, &CreationDate) | [-1].ImageId' \
-                                --output text
-                        """, returnStdout: true).trim()
+                        error """
+                        No Eureka AMI found in SSM for branch: ${branch}
                         
-                        if (!amiId || amiId == '') {
-                            error "No Eureka AMI found! Run eureka-ci first."
-                        }
-                        echo "✅ Using latest AMI: ${amiId}"
-                    } else {
-                        echo "✅ Using provided AMI ID: ${amiId}"
+                        Please run eureka-ci pipeline for ${branch} branch first.
+                        SSM Path expected: /eureka/${branch}/latest-ami
+                        """
                     }
                     
                     env.AMI_ID = amiId
+                    echo "✅ Using latest AMI from SSM: ${env.AMI_ID}"
+                    
+                    // Also get metadata location for reference
+                    def metadataLocation = sh(script: """
+                        aws ssm get-parameter \
+                            --name "/eureka/${branch}/metadata-location" \
+                            --region ${env.AWS_DEFAULT_REGION} \
+                            --query "Parameter.Value" \
+                            --output text 2>/dev/null || echo ""
+                    """, returnStdout: true).trim()
+                    
+                    if (metadataLocation) {
+                        echo "📝 AMI Metadata: ${metadataLocation}"
+                    }
                 }
             }
         }
 
-        stage('Validate') {
+        stage('Validate AMI ID') {
             when { expression { params.ACTION in ['apply', 'plan'] } }
             steps {
                 script {
                     if (!env.AMI_ID || env.AMI_ID == '') {
-                        error "AMI_ID is required for apply action"
+                        error "AMI_ID is required for ${params.ACTION} action. Provide it as parameter or ensure CI pipeline has run."
                     }
+                    
+                    // Verify AMI exists
+                    def amiExists = sh(script: """
+                        aws ec2 describe-images \
+                            --image-ids ${env.AMI_ID} \
+                            --region ${env.AWS_DEFAULT_REGION} \
+                            --query 'Images[0].ImageId' \
+                            --output text 2>/dev/null || echo ""
+                    """, returnStdout: true).trim()
+                    
+                    if (!amiExists || amiExists == '') {
+                        error "AMI ${env.AMI_ID} does not exist in region ${env.AWS_DEFAULT_REGION}"
+                    }
+                    
                     echo "✅ Validation passed for ${params.ENVIRONMENT}"
+                    echo "✅ AMI ${env.AMI_ID} is valid"
                 }
             }
         }
@@ -100,7 +134,6 @@ pipeline {
         stage('Terraform Init') {
             steps {
                 dir("eureka/terraform/${params.ENVIRONMENT}") {
-                    // Copy terraform files
                     sh """
                         cp ../*.tf . 2>/dev/null || true
                         terraform init
@@ -116,6 +149,7 @@ pipeline {
                     sh """
                         terraform plan \
                             -var="ami_id=${env.AMI_ID}" \
+                            -var="service_name=${env.SERVICE_NAME}" \
                             -var="aws_region=${env.AWS_DEFAULT_REGION}" \
                             -var="eureka_port=${env.EUREKA_PORT}" \
                             -var="environment=${params.ENVIRONMENT}" \
@@ -134,6 +168,7 @@ pipeline {
                     sh """
                         terraform apply -auto-approve \
                             -var="ami_id=${env.AMI_ID}" \
+                            -var="service_name=${env.SERVICE_NAME}" \
                             -var="aws_region=${env.AWS_DEFAULT_REGION}" \
                             -var="eureka_port=${env.EUREKA_PORT}" \
                             -var="environment=${params.ENVIRONMENT}" \
@@ -151,47 +186,79 @@ pipeline {
                 script {
                     dir("eureka/terraform/${params.ENVIRONMENT}") {
                         def private_ip = ""
+                        def public_ip = ""
+                        
                         try {
                             private_ip = sh(script: "terraform output -raw eureka_private_ip", returnStdout: true).trim()
+                            public_ip = sh(script: "terraform output -raw eureka_public_ip", returnStdout: true).trim()
                         } catch (Exception e) {
+                            echo "Terraform output not available, querying AWS directly..."
                             private_ip = sh(script: """
                                 aws ec2 describe-instances \
-                                    --filters "Name=tag:Environment,Values=${params.ENVIRONMENT}" "Name=tag:Service,Values=eureka" \
+                                    --filters "Name=tag:Environment,Values=${params.ENVIRONMENT}" \
+                                              "Name=tag:Service,Values=${env.SERVICE_NAME}" \
                                     --query 'Reservations[0].Instances[0].PrivateIpAddress' \
+                                    --region ${env.AWS_DEFAULT_REGION} \
+                                    --output text
+                            """, returnStdout: true).trim()
+                            
+                            public_ip = sh(script: """
+                                aws ec2 describe-instances \
+                                    --filters "Name=tag:Environment,Values=${params.ENVIRONMENT}" \
+                                              "Name=tag:Service,Values=${env.SERVICE_NAME}" \
+                                    --query 'Reservations[0].Instances[0].PublicIpAddress' \
                                     --region ${env.AWS_DEFAULT_REGION} \
                                     --output text
                             """, returnStdout: true).trim()
                         }
                         
-                        if (private_ip && private_ip != 'None') {
+                        if (private_ip && private_ip != 'None' && private_ip != '') {
+                            // Store in SSM
                             sh """
                                 aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/eureka/ip" \
+                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ip" \
                                     --value "${private_ip}" \
                                     --type "String" \
-                                    --overwrite
+                                    --overwrite || true
                                 
                                 aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/eureka/port" \
+                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/public-ip" \
+                                    --value "${public_ip}" \
+                                    --type "String" \
+                                    --overwrite || true
+                                
+                                aws ssm put-parameter \
+                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/port" \
                                     --value "${env.EUREKA_PORT}" \
                                     --type "String" \
-                                    --overwrite
+                                    --overwrite || true
                                 
                                 aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/eureka/ami" \
+                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ami" \
                                     --value "${env.AMI_ID}" \
                                     --type "String" \
-                                    --overwrite
+                                    --overwrite || true
+                                
+                                aws ssm put-parameter \
+                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deployed-at" \
+                                    --value "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+                                    --type "String" \
+                                    --overwrite || true
                             """
                             
                             echo "=========================================="
-                            echo "✅ ${params.ENVIRONMENT.toUpperCase()} Eureka Deployed"
+                            echo "✅ ${params.ENVIRONMENT.toUpperCase()} Eureka Deployed Successfully"
                             echo "=========================================="
-                            echo "IP: ${private_ip}"
+                            echo "Service: ${env.SERVICE_NAME}"
+                            echo "Private IP: ${private_ip}"
+                            echo "Public IP: ${public_ip}"
                             echo "Port: ${env.EUREKA_PORT}"
                             echo "URL: http://${private_ip}:${env.EUREKA_PORT}/eureka/"
-                            echo "SSM Path: ${env.SSM_PATH}/eureka/"
+                            echo "AMI ID: ${env.AMI_ID}"
+                            echo "SSM Path: ${env.SSM_PATH}/${env.SERVICE_NAME}/"
                             echo "=========================================="
+                        } else {
+                            error "Failed to get instance IP address for ${params.ENVIRONMENT}"
                         }
                     }
                 }
@@ -202,10 +269,13 @@ pipeline {
             when { expression { params.ACTION == 'destroy' } }
             steps {
                 script {
+                    // Clean up SSM parameters
                     sh """
-                        aws ssm delete-parameter --name "${env.SSM_PATH}/eureka/ip" 2>/dev/null || true
-                        aws ssm delete-parameter --name "${env.SSM_PATH}/eureka/port" 2>/dev/null || true
-                        aws ssm delete-parameter --name "${env.SSM_PATH}/eureka/ami" 2>/dev/null || true
+                        aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ip" 2>/dev/null || true
+                        aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/public-ip" 2>/dev/null || true
+                        aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/port" 2>/dev/null || true
+                        aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ami" 2>/dev/null || true
+                        aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deployed-at" 2>/dev/null || true
                     """
                 }
                 dir("eureka/terraform/${params.ENVIRONMENT}") {
@@ -222,6 +292,7 @@ pipeline {
                     echo "✅ ${params.ENVIRONMENT.toUpperCase()} Deployment Complete!"
                     echo "=========================================="
                     echo "Environment: ${params.ENVIRONMENT}"
+                    echo "Service: ${env.SERVICE_NAME}"
                     echo "AMI ID: ${env.AMI_ID}"
                     echo "Instance Type: ${env.INSTANCE_TYPE}"
                     echo "=========================================="
@@ -232,10 +303,15 @@ pipeline {
 
     post {
         success {
+            echo "=========================================="
             echo "✅ Eureka ${params.ACTION} for ${params.ENVIRONMENT} completed!"
+            echo "=========================================="
         }
         failure {
+            echo "=========================================="
             echo "❌ Eureka ${params.ACTION} for ${params.ENVIRONMENT} failed!"
+            echo "=========================================="
+            echo "Check logs above for details."
         }
     }
 }
