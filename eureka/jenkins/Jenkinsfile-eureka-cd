@@ -108,8 +108,6 @@ pipeline {
         stage('Checkout Infrastructure Code') {
             steps {
                 script {
-                    // Checkout infrastructure code from the same branch as the AMI
-                    // This matches CI pattern where it checks out the branch parameter
                     def infraRepo = 'https://github.com/kartikeyasoft/test.git'
                     def infraBranch = params.BRANCH
                     
@@ -157,7 +155,6 @@ pipeline {
                 script {
                     echo "Fetching latest AMI for branch: ${params.BRANCH}"
                     
-                    // Read from the same SSM path that CI pipeline writes to
                     def amiId = sh(script: """
                         aws ssm get-parameter \
                             --name "/eureka/${params.BRANCH}/latest-ami" \
@@ -189,7 +186,6 @@ pipeline {
                         error "AMI_ID is required for ${params.ACTION} action"
                     }
                     
-                    // Verify AMI exists (same validation as CI)
                     def amiState = sh(script: """
                         aws ec2 describe-images \
                             --image-ids ${env.AMI_ID} \
@@ -263,7 +259,6 @@ pipeline {
             steps {
                 script {
                     dir("eureka/terraform/${env.TARGET_ENV}") {
-                        // Wait a moment for instance to be ready
                         sh "sleep 10"
                         
                         def private_ip = sh(script: """
@@ -334,7 +329,6 @@ pipeline {
             when { expression { params.ACTION == 'destroy' } }
             steps {
                 script {
-                    // Clean up SSM parameters
                     sh """
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ip" 2>/dev/null || true
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/port" 2>/dev/null || true
@@ -356,27 +350,22 @@ pipeline {
 
     post {
         success {
-            echo "=========================================="
-            echo "✅ CD Success for ${params.BRANCH}!"
-            echo "=========================================="
-            if (params.ACTION == 'apply') {
-                echo "Environment: ${env.TARGET_ENV}"
-                echo "AMI ID: ${env.AMI_ID}"
+            script {
+                echo "=========================================="
+                echo "✅ CD Success for ${params.BRANCH}!"
+                echo "=========================================="
+                if (params.ACTION == 'apply') {
+                    echo "Environment: ${env.TARGET_ENV}"
+                    echo "AMI ID: ${env.AMI_ID}"
+                }
+                echo "=========================================="
             }
-            echo "=========================================="
         }
         failure {
-            echo "=========================================="
-            echo "❌ CD Failed for branch ${params.BRANCH}"
-            echo "=========================================="
             script {
-                dir('eureka/terraform') {
-                    sh '''
-                        if [ -f terraform.tfstate ]; then
-                            echo "=== Terraform state exists ==="
-                        fi
-                    '''
-                }
+                echo "=========================================="
+                echo "❌ CD Failed for branch ${params.BRANCH}"
+                echo "=========================================="
             }
         }
     }
