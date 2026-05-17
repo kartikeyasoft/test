@@ -21,37 +21,6 @@ pipeline {
                     env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
                     def config = envConfig()
                     
-                    // Single source of truth for all environment configurations
-                    def envConfigs = [
-                        dev: [
-                            subnet_id: 'subnet-0c01b25666d64bc87',
-                            vpc_id: 'vpc-0310386fea2f2ce82',
-                            security_group_id: 'sg-0b454c1ede4281678',
-                            instance_type: 't3.micro',
-                            key_name: 'ksansible',
-                            ssm_path: '/exam/dev',
-                            require_approval: false
-                        ],
-                        qa: [
-                            subnet_id: 'subnet-0aa31e769c8f4d73e',
-                            vpc_id: 'vpc-0cb7deb47a6bfa727',
-                            security_group_id: 'sg-04334807773be2bc3',
-                            instance_type: 't3.micro',
-                            key_name: 'ksansible',
-                            ssm_path: '/exam/qa',
-                            require_approval: false
-                        ],
-                        prod: [
-                            subnet_id: 'subnet-066f12691b0612dd6',
-                            vpc_id: 'vpc-06cf33d3bcdcf4be9',
-                            security_group_id: 'sg-08c12a5119c33584d',
-                            instance_type: 't3.micro',
-                            key_name: 'ksansible',
-                            ssm_path: '/exam/prod',
-                            require_approval: true
-                        ]
-                    ]
-                    
                     // Determine target environment based on branch
                     def targetEnv = 'dev'
                     if (params.BRANCH == 'main' || params.BRANCH == 'master') {
@@ -62,7 +31,7 @@ pipeline {
                         targetEnv = 'dev'
                     }
                     
-                    def envData = envConfigs[targetEnv]
+                    def envData = config.environments[targetEnv]
                     
                     // Set environment variables
                     env.TARGET_ENV = targetEnv
