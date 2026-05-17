@@ -9,54 +9,10 @@
     nexus_url: "{{ lookup('env', 'NEXUS_URL') }}"
 
   tasks:
-    - name: Fix APT repository issues
-      block:
-        - name: Clean APT cache
-          command: apt-get clean
-          become: yes
-
-        - name: Remove corrupt lists
-          file:
-            path: /var/lib/apt/lists
-            state: absent
-          become: yes
-
-        - name: Recreate lists directory
-          file:
-            path: /var/lib/apt/lists
-            state: directory
-            mode: '0755'
-          become: yes
-
-        - name: Update with fix-missing
-          command: apt-get update --fix-missing
-          become: yes
-
-    - name: Fix broken dependencies
-      command: apt-get --fix-broken install -y
-      become: yes
-
-    - name: Enable universe repository
-      apt_repository:
-        repo: "deb http://archive.ubuntu.com/ubuntu {{ ansible_distribution_release }} universe"
-        state: present
-      become: yes
-
-    - name: Update apt again
-      apt:
-        update_cache: yes
-        force_apt_get: yes
-      become: yes
 
     - name: Install all packages together
       apt:
         name:
-          - curl
-          - wget
-          - unzip
-          - net-tools
-          - jq
-          - mysql-client
           - openjdk-17-jdk
         state: present
         force_apt_get: yes
