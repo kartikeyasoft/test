@@ -19,8 +19,6 @@ pipeline {
         NEXUS_CREDS = credentials('nexus-creds')
         AWS_ACCESS_KEY_ID = credentials('aws-access-key-id')
         AWS_SECRET_ACCESS_KEY = credentials('aws-secret-access-key')
-        
-        SERVICE_NAME = 'eureka'
     }
 
     stages {
@@ -32,9 +30,11 @@ pipeline {
                 script {
                     env.BUILD_BRANCH = params.BRANCH
                     env.GIT_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                    env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
                     
                     echo "Checked out branch: ${env.BUILD_BRANCH}"
                     echo "Commit: ${env.GIT_COMMIT}"
+                    echo "Timestamp: ${env.TIMESTAMP}"
                 }
             }
         }
@@ -42,7 +42,6 @@ pipeline {
         stage('Setup Branch Config') {
             steps {
                 script {
-                    // Simple branch to environment mapping
                     if (env.BUILD_BRANCH == 'main' || env.BUILD_BRANCH == 'master') {
                         env.TARGET_ENV = 'prod'
                         env.AUTO_DEPLOY = 'false'
@@ -66,21 +65,37 @@ pipeline {
         stage('Load Configuration') {
             steps {
                 script {
-                    def config = envConfig()
-                    
-                    env.NEXUS_URL = config.nexus.url
-                    env.AWS_DEFAULT_REGION = config.aws.region
-                    env.EUREKA_PORT = config.eureka.defaultPort
-                    env.BASE_AMI_ID = config.baseAmi.ubuntu2204
-                    
-                    echo "=========================================="
-                    echo "Loaded Configuration"
-                    echo "=========================================="
-                    echo "Nexus URL: ${env.NEXUS_URL}"
-                    echo "AWS Region: ${env.AWS_DEFAULT_REGION}"
-                    echo "Eureka Port: ${env.EUREKA_PORT}"
-                    echo "Base AMI: ${env.BASE_AMI_ID}"
-                    echo "=========================================="
+                    try {
+                        def config = envConfig()
+                        
+                        // Debug: Print config structure
+                        echo "Config type: ${config.getClass()}"
+                        echo "Config keys: ${config.keySet()}"
+                        
+                        // Load values from shared library
+                        env.NEXUS_URL = config.nexus.url
+                        env.AWS_DEFAULT_REGION = config.aws.region
+                        env.EUREKA_PORT = config.eureka.defaultPort
+                        env.BASE_AMI_ID = config.baseAmi.ubuntu2204
+                        env.SERVICE_NAME = config.servicename.obj1
+                        env.S3_BUCKET = config.s3.bucket
+                        
+                        echo "=========================================="
+                        echo "Loaded Configuration"
+                        echo "=========================================="
+                        echo "Nexus URL: ${env.NEXUS_URL}"
+                        echo "AWS Region: ${env.AWS_DEFAULT_REGION}"
+                        echo "Eureka Port: ${env.EUREKA_PORT}"
+                        echo "Base AMI: ${env.BASE_AMI_ID}"
+                        echo "Service Name: ${env.SERVICE_NAME}"
+                        echo "S3 Bucket Name: ${env.S3_BUCKET}"
+                        echo "=========================================="
+                    } catch (Exception e) {
+                        echo "ERROR loading configuration: ${e.getMessage()}"
+                        echo "Stack trace:"
+                        e.printStackTrace()
+                        throw e
+                    }
                 }
             }
         }
@@ -141,14 +156,14 @@ pipeline {
             }
         }
 
-       stage('Bake Golden AMI') {
+        stage('Bake Golden AMI') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 script {
                     dir('eureka/packer') {
                         sh '''
                             echo "=== Building AMI with branch name ==="
-                            echo "Branch: ${GIT_BRANCH}"
+                            echo "Branch: ${BUILD_BRANCH}"
                             echo "Version: ${SERVICE_VERSION}"
                             echo "Commit: ${GIT_COMMIT}"
                             echo "Build Number: ${BUILD_NUMBER}"
@@ -163,7 +178,7 @@ pipeline {
                                 -var "nexus_url=${NEXUS_URL}" \
                                 -var "eureka_port=${EUREKA_PORT}" \
                                 -var "source_ami=${BASE_AMI_ID}" \
-                                -var "git_branch=${GIT_BRANCH}" \
+                                -var "git_branch=${BUILD_BRANCH}" \
                                 -var "git_commit=${GIT_COMMIT}" \
                                 -var "build_number=${BUILD_NUMBER}" \
                                 eureka.pkr.hcl 2>&1 | tee build-output.txt
@@ -185,8 +200,7 @@ pipeline {
                             env.AMI_ID = amiProps.split('=')[1].trim()
                             echo "✅ AMI Created: ${env.AMI_ID}"
                             
-                            // Display full AMI name for reference
-                            def amiName = "myapp-${env.SERVICE_NAME}-${env.SERVICE_VERSION}-${env.GIT_BRANCH}-*"
+                            def amiName = "myapp-${env.SERVICE_NAME}-${env.SERVICE_VERSION}-${env.BUILD_BRANCH}-*"
                             echo "📝 AMI Name Pattern: ${amiName}"
                         }
                     }
@@ -194,14 +208,73 @@ pipeline {
             }
         }
 
-        stage('Store AMI Info') {
+
+        stage('Store AMI Info in S3 + SSM') {
             when { expression { env.AMI_ID != null && env.AMI_ID != '' } }
             steps {
                 script {
+                    // Trim S3 bucket name (remove any spaces)
+                    env.S3_BUCKET = env.S3_BUCKET.trim()
+                    
+                    // Create metadata JSON manually using writeFile
+                    def amiMetadata = """{
+            "ami_id": "${env.AMI_ID}",
+            "branch": "${env.BUILD_BRANCH}",
+            "version": "${env.SERVICE_VERSION}",
+            "build_number": "${env.BUILD_NUMBER}",
+            "commit": "${env.GIT_COMMIT}",
+            "timestamp": "${env.TIMESTAMP}",
+            "created_at": "${new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")}",
+            "service_name": "${env.SERVICE_NAME}",
+            "environment": "${env.TARGET_ENV}",
+            "source_ami": "${env.BASE_AMI_ID}",
+            "eureka_port": "${env.EUREKA_PORT}"
+        }"""
+                    
+                    writeFile file: 'ami-metadata.json', text: amiMetadata
+                    
+                    // Create S3 bucket if it doesn't exist (with trimmed name)
                     sh """
+                        # Trim bucket name and create if needed
+                        S3_BUCKET_TRIMMED="${env.S3_BUCKET}"
+                        aws s3 mb s3://\${S3_BUCKET_TRIMMED} --region ${env.AWS_DEFAULT_REGION} 2>/dev/null || true
+                        aws s3api put-bucket-versioning --bucket \${S3_BUCKET_TRIMMED} --versioning-configuration Status=Enabled 2>/dev/null || true
+                    """
+                    
+                    // Upload to S3 (complete history - source of truth)
+                    // IMPORTANT: No space between bucket name and path!
+                    sh """
+                        echo "Uploading AMI metadata to S3..."
+                        
+                        # Store with timestamp (complete history)
+                        aws s3 cp ami-metadata.json s3://${env.S3_BUCKET}/eureka/amis/${env.BUILD_BRANCH}/${env.TIMESTAMP}.json
+                        
+                        # Store as latest (overwrites)
+                        aws s3 cp ami-metadata.json s3://${env.S3_BUCKET}/eureka/latest/${env.BUILD_BRANCH}.json
+                        
+                        echo "✅ S3 upload complete"
+                    """
+                    
+                    // Update SSM (fast cache - latest pointers only)
+                    sh """
+                        echo "Updating SSM parameters..."
+                        
                         aws ssm put-parameter \
                             --name "/eureka/${env.BUILD_BRANCH}/latest-ami" \
                             --value "${env.AMI_ID}" \
+                            --type "String" \
+                            --overwrite \
+                            --description "Latest AMI for ${env.BUILD_BRANCH} branch" || true
+                        
+                        aws ssm put-parameter \
+                            --name "/eureka/${env.BUILD_BRANCH}/latest-version" \
+                            --value "${env.SERVICE_VERSION}" \
+                            --type "String" \
+                            --overwrite || true
+                        
+                        aws ssm put-parameter \
+                            --name "/eureka/${env.BUILD_BRANCH}/metadata-location" \
+                            --value "s3://${env.S3_BUCKET}/eureka/latest/${env.BUILD_BRANCH}.json" \
                             --type "String" \
                             --overwrite || true
                         
@@ -209,12 +282,22 @@ pipeline {
                             --name "/eureka/latest-ami" \
                             --value "${env.AMI_ID}" \
                             --type "String" \
-                            --overwrite || true
+                            --overwrite \
+                            --description "Most recent AMI across all branches" || true
+                        
+                        echo "✅ SSM parameters updated"
                     """
-                    echo "✅ Stored AMI in SSM: ${env.AMI_ID}"
+                    
+                    echo "=========================================="
+                    echo "✅ AMI Information Stored Successfully"
+                    echo "=========================================="
+                    echo "AMI ID: ${env.AMI_ID}"
+                    echo "S3 Path: s3://${env.S3_BUCKET}/eureka/amis/${env.BUILD_BRANCH}/${env.TIMESTAMP}.json"
+                    echo "SSM: /eureka/${env.BUILD_BRANCH}/latest-ami = ${env.AMI_ID}"
+                    echo "=========================================="
                 }
             }
-        }
+        }   
 
         stage('Trigger CD') {
             when { 
@@ -229,11 +312,12 @@ pipeline {
                 script {
                     echo "Auto-deploying ${env.BUILD_BRANCH} to ${env.TARGET_ENV}"
                     
+                    // FIXED: Changed 'choice' to 'string' for ACTION parameter
                     build job: 'eureka-cd',
                         parameters: [
                             string(name: 'ENVIRONMENT', value: env.TARGET_ENV),
                             string(name: 'AMI_ID', value: env.AMI_ID),
-                            choice(name: 'ACTION', value: 'apply')
+                            string(name: 'ACTION', value: 'apply')  // Changed from 'choice' to 'string'
                         ],
                         wait: false
                 }
@@ -256,6 +340,7 @@ pipeline {
                     echo "=========================================="
                     echo "Branch: ${env.BUILD_BRANCH}"
                     echo "AMI ID: ${env.AMI_ID}"
+                    echo "S3 Path: s3://${env.S3_BUCKET}/eureka/amis/${env.BUILD_BRANCH}/${env.TIMESTAMP}.json"
                     echo ""
                     echo "To deploy to ${env.TARGET_ENV}:"
                     echo "  Job: eureka-cd"
@@ -275,6 +360,8 @@ pipeline {
             echo "=========================================="
             echo "Branch: ${env.BUILD_BRANCH}"
             echo "AMI ID: ${env.AMI_ID}"
+            echo "S3: s3://${env.S3_BUCKET}/eureka/amis/${env.BUILD_BRANCH}/"
+            echo "SSM: /eureka/${env.BUILD_BRANCH}/latest-ami"
             echo "=========================================="
         }
         failure {
@@ -282,7 +369,6 @@ pipeline {
             echo "❌ CI Failed for branch ${env.BUILD_BRANCH}"
             echo "=========================================="
             script {
-                // Print packer output for debugging if it exists
                 dir('eureka/packer') {
                     sh '''
                         if [ -f build-output.txt ]; then
