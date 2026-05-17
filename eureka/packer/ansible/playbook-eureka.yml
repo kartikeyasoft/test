@@ -10,58 +10,7 @@
 
   tasks:
 
-    - name: Install all packages together
-      apt:
-        name:
-          - openjdk-17-jdk
-        state: present
-        force_apt_get: yes
-        install_recommends: no
-      become: yes
-      register: install_result
-      until: install_result is success
-      retries: 3
-      delay: 10
-
-    - name: Verify Java installation
-      command: java -version
-      register: java_version
-      changed_when: false
-      become: yes
-
-    - name: Display Java version
-      debug:
-        msg: "{{ java_version.stderr_lines[0] }}"
-
-    - name: Install AWS CLI v2
-      block:
-        - name: Download AWS CLI
-          get_url:
-            url: https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
-            dest: /tmp/awscliv2.zip
-          become: yes
-
-        - name: Extract AWS CLI
-          unarchive:
-            src: /tmp/awscliv2.zip
-            dest: /tmp
-            remote_src: yes
-          become: yes
-
-        - name: Install AWS CLI
-          command: /tmp/aws/install
-          become: yes
-          args:
-            creates: /usr/local/bin/aws
-
-        - name: Clean up
-          file:
-            path: "{{ item }}"
-            state: absent
-          loop:
-            - /tmp/awscliv2.zip
-            - /tmp/aws
-          become: yes
+   
 
     - name: Create eureka user
       user:
