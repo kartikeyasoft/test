@@ -78,7 +78,7 @@ pipeline {
         stage('Checkout Infrastructure Code') {
             steps {
                 script {
-                    def infraRepo = 'https://github.com/kartikeyasoft/micro.git'
+                    def infraRepo = 'https://github.com/kartikeyasoft/test.git'
                     def infraBranch = params.BRANCH
                     
                     echo "=========================================="
