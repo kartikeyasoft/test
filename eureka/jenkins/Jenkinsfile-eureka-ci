@@ -208,24 +208,25 @@ pipeline {
             }
         }
 
+
         stage('Store AMI Info in S3 + SSM') {
             when { expression { env.AMI_ID != null && env.AMI_ID != '' } }
             steps {
                 script {
                     // Create metadata JSON manually using writeFile
                     def amiMetadata = """{
-    "ami_id": "${env.AMI_ID}",
-    "branch": "${env.BUILD_BRANCH}",
-    "version": "${env.SERVICE_VERSION}",
-    "build_number": "${env.BUILD_NUMBER}",
-    "commit": "${env.GIT_COMMIT}",
-    "timestamp": "${env.TIMESTAMP}",
-    "created_at": "${new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")}",
-    "service_name": "${env.SERVICE_NAME}",
-    "environment": "${env.TARGET_ENV}",
-    "source_ami": "${env.BASE_AMI_ID}",
-    "eureka_port": "${env.EUREKA_PORT}"
-}"""
+                    "ami_id": "${env.AMI_ID}",
+                    "branch": "${env.BUILD_BRANCH}",
+                    "version": "${env.SERVICE_VERSION}",
+                    "build_number": "${env.BUILD_NUMBER}",
+                    "commit": "${env.GIT_COMMIT}",
+                    "timestamp": "${env.TIMESTAMP}",
+                    "created_at": "${new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")}",
+                    "service_name": "${env.SERVICE_NAME}",
+                    "environment": "${env.TARGET_ENV}",
+                    "source_ami": "${env.BASE_AMI_ID}",
+                    "eureka_port": "${env.EUREKA_PORT}"
+                        }"""
                     
                     writeFile file: 'ami-metadata.json', text: amiMetadata
                     
@@ -247,6 +248,7 @@ pipeline {
                     sh """
                         echo "Updating SSM parameters..."
                         
+                        # Latest AMI for branch
                         aws ssm put-parameter \
                             --name "/eureka/${env.BUILD_BRANCH}/latest-ami" \
                             --value "${env.AMI_ID}" \
@@ -254,18 +256,21 @@ pipeline {
                             --overwrite \
                             --description "Latest AMI for ${env.BUILD_BRANCH} branch" || true
                         
+                        # Latest version for branch
                         aws ssm put-parameter \
                             --name "/eureka/${env.BUILD_BRANCH}/latest-version" \
                             --value "${env.SERVICE_VERSION}" \
                             --type "String" \
                             --overwrite || true
                         
+                        # Pointer to metadata in S3
                         aws ssm put-parameter \
                             --name "/eureka/${env.BUILD_BRANCH}/metadata-location" \
                             --value "s3://${env.S3_BUCKET}/eureka/latest/${env.BUILD_BRANCH}.json" \
                             --type "String" \
                             --overwrite || true
                         
+                        # Global latest AMI across all branches
                         aws ssm put-parameter \
                             --name "/eureka/latest-ami" \
                             --value "${env.AMI_ID}" \
@@ -285,7 +290,7 @@ pipeline {
                     echo "=========================================="
                 }
             }
-        }
+        }    
 
         stage('Trigger CD') {
             when { 
