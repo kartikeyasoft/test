@@ -18,34 +18,27 @@ pipeline {
         stage('Load Configuration') {
             steps {
                 script {
-                    // Get timestamp
                     env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
-                    
-                    // Get configurations from shared library
                     def config = envConfig()
                     
                     // Branch to environment mapping
                     if (params.BRANCH == 'main' || params.BRANCH == 'master') {
                         env.TARGET_ENV = 'prod'
-                        env.AUTO_DEPLOY = 'false'
                         env.REQUIRE_APPROVAL = 'true'
                         env.INSTANCE_TYPE = 't3.medium'
                         env.KEY_NAME = 'ksansible-prod'
                     } else if (params.BRANCH == 'qa') {
                         env.TARGET_ENV = 'qa'
-                        env.AUTO_DEPLOY = 'true'
                         env.REQUIRE_APPROVAL = 'false'
                         env.INSTANCE_TYPE = 't3.micro'
                         env.KEY_NAME = 'ksansible'
                     } else {
                         env.TARGET_ENV = 'dev'
-                        env.AUTO_DEPLOY = 'true'
                         env.REQUIRE_APPROVAL = 'false'
                         env.INSTANCE_TYPE = 't3.micro'
                         env.KEY_NAME = 'ksansible'
                     }
                     
-                    // AWS Configuration
                     env.AWS_DEFAULT_REGION = config.aws.region
                     env.SERVICE_NAME = 'eureka'
                     env.EUREKA_PORT = config.eureka.defaultPort
@@ -53,19 +46,16 @@ pipeline {
                     // Environment-specific VPC configuration
                     def envConfigs = [
                         dev: [
-                            vpc_cidr: '192.168.0.0/16',
                             subnet_id: 'subnet-076bd99dde1330498',
                             vpc_id: 'vpc-0310386fea2f2ce82',
                             ssm_path: '/exam/dev'
                         ],
                         qa: [
-                            vpc_cidr: '172.31.0.0/16',
                             subnet_id: 'subnet-0aa31e769c8f4d73e',
                             vpc_id: 'vpc-0cb7deb47a6bfa727',
                             ssm_path: '/exam/qa'
                         ],
                         prod: [
-                            vpc_cidr: '10.2.0.0/16',
                             subnet_id: 'subnet-09c74646d4a4c2794',
                             vpc_id: 'vpc-06cf33d3bcdcf4be9',
                             ssm_path: '/exam/prod'
@@ -76,21 +66,16 @@ pipeline {
                     env.SUBNET_ID = envData.subnet_id
                     env.VPC_ID = envData.vpc_id
                     env.SSM_PATH = envData.ssm_path
-                    
-                    // AMI ID
                     env.AMI_ID = params.AMI_ID
                     env.BUILD_BRANCH = params.BRANCH
                     
                     echo "=========================================="
-                    echo "Eureka CD Pipeline - Branch: ${params.BRANCH}"
+                    echo "Eureka CD Pipeline - Deploying to: ${params.BRANCH}"
                     echo "=========================================="
                     echo "Target Environment: ${env.TARGET_ENV}"
                     echo "Action: ${params.ACTION}"
                     echo "Instance Type: ${env.INSTANCE_TYPE}"
-                    echo "Subnet ID: ${env.SUBNET_ID}"
-                    echo "VPC ID: ${env.VPC_ID}"
                     echo "AMI ID: ${env.AMI_ID ?: 'Will fetch from SSM'}"
-                    echo "Key Name: ${env.KEY_NAME}"
                     echo "=========================================="
                 }
             }
@@ -99,14 +84,30 @@ pipeline {
         stage('Checkout Infrastructure Code') {
             steps {
                 script {
+                    // CRITICAL FIX: Always checkout Terraform from master branch
+                    // This ensures infrastructure code is consistent across all environments
                     def infraRepo = 'https://github.com/kartikeyasoft/test.git'
-                    def infraBranch = params.BRANCH
+                    def infraBranch = 'master'  // ← FIXED: Always use master
                     
-                    echo "Checking out infrastructure code from branch: ${infraBranch}"
+                    echo "=========================================="
+                    echo "Checking out infrastructure code"
+                    echo "=========================================="
+                    echo "Repository: ${infraRepo}"
+                    echo "Branch: ${infraBranch} (ALWAYS from master for consistency)"
+                    echo "Deploying application from branch: ${params.BRANCH}"
+                    echo "=========================================="
+                    
+                    // Clean checkout
+                    deleteDir()
+                    
                     git url: infraRepo, branch: infraBranch
                     
                     env.INFRA_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    echo "✅ Checkout complete - Commit: ${env.INFRA_COMMIT}"
+                    
+                    echo "✅ Infrastructure code checked out"
+                    echo "   Commit: ${env.INFRA_COMMIT}"
+                    echo "   Branch: ${infraBranch}"
+                    echo "=========================================="
                 }
             }
         }
@@ -119,11 +120,11 @@ pipeline {
                 } 
             }
             steps {
-                input message: "Approve deployment to ${env.TARGET_ENV} (${params.BRANCH} branch)?",
+                input message: "⚠️ Approve deployment to ${env.TARGET_ENV} (${params.BRANCH} branch)?",
                     ok: "Deploy",
                     parameters: [
                         string(name: 'APPROVER', defaultValue: "${env.BUILD_USER_ID ?: 'Unknown'}", description: 'Approver name'),
-                        text(name: 'DEPLOY_NOTES', defaultValue: "Deploying ${env.SERVICE_NAME} from ${params.BRANCH} branch", description: 'Deployment notes')
+                        text(name: 'DEPLOY_NOTES', defaultValue: "Deploying ${env.SERVICE_NAME} from ${params.BRANCH} branch using infrastructure from master", description: 'Deployment notes')
                     ]
             }
         }
@@ -152,7 +153,7 @@ pipeline {
                         ❌ No Eureka AMI found for branch: ${params.BRANCH}
                         
                         Please run eureka-ci pipeline for ${params.BRANCH} branch first.
-                        Expected SSM path: /eureka/${params.BRANCH}/latest-ami
+                        The CI pipeline stores AMI at: /eureka/${params.BRANCH}/latest-ami
                         """
                     }
                     
@@ -205,8 +206,6 @@ pipeline {
                     sh """
                         terraform plan \
                             -var="ami_id=${env.AMI_ID}" \
-                            -var="service_name=${env.SERVICE_NAME}" \
-                            -var="branch=${params.BRANCH}" \
                             -var="aws_region=${env.AWS_DEFAULT_REGION}" \
                             -var="eureka_port=${env.EUREKA_PORT}" \
                             -var="environment=${env.TARGET_ENV}" \
@@ -226,8 +225,6 @@ pipeline {
                     sh """
                         terraform apply -auto-approve \
                             -var="ami_id=${env.AMI_ID}" \
-                            -var="service_name=${env.SERVICE_NAME}" \
-                            -var="branch=${params.BRANCH}" \
                             -var="aws_region=${env.AWS_DEFAULT_REGION}" \
                             -var="eureka_port=${env.EUREKA_PORT}" \
                             -var="environment=${env.TARGET_ENV}" \
@@ -295,16 +292,12 @@ pipeline {
                             echo "=========================================="
                             echo "✅ Deployment Complete!"
                             echo "=========================================="
+                            echo "Application Branch: ${params.BRANCH}"
+                            echo "Infrastructure Branch: master (from checkout)"
                             echo "Environment: ${env.TARGET_ENV}"
-                            echo "Branch: ${params.BRANCH}"
-                            echo "Service: ${env.SERVICE_NAME}"
                             echo "Private IP: ${private_ip}"
-                            echo "Port: ${env.EUREKA_PORT}"
                             echo "URL: http://${private_ip}:${env.EUREKA_PORT}/eureka/"
-                            echo "AMI ID: ${env.AMI_ID}"
                             echo "=========================================="
-                        } else {
-                            echo "⚠️ Could not find running instance, but terraform apply completed successfully"
                         }
                     }
                 }
@@ -326,10 +319,6 @@ pipeline {
                 dir("eureka/terraform/${env.TARGET_ENV}") {
                     sh "terraform destroy -auto-approve"
                 }
-                
-                echo "=========================================="
-                echo "✅ Destroy Complete for ${env.TARGET_ENV}"
-                echo "=========================================="
             }
         }
     }
@@ -341,8 +330,9 @@ pipeline {
                 echo "✅ CD Success for ${params.BRANCH}!"
                 echo "=========================================="
                 if (params.ACTION == 'apply') {
+                    echo "Deployed application from branch: ${params.BRANCH}"
+                    echo "Using infrastructure from: master"
                     echo "Environment: ${env.TARGET_ENV}"
-                    echo "AMI ID: ${env.AMI_ID}"
                 }
                 echo "=========================================="
             }
