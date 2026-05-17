@@ -208,7 +208,6 @@ pipeline {
             }
         }
 
-
         stage('Store AMI Info in S3 + SSM') {
             when { expression { env.AMI_ID != null && env.AMI_ID != '' } }
             steps {
@@ -242,7 +241,6 @@ pipeline {
                     """
                     
                     // Upload to S3 (complete history - source of truth)
-                    // IMPORTANT: No space between bucket name and path!
                     sh """
                         echo "Uploading AMI metadata to S3..."
                         
@@ -312,13 +310,45 @@ pipeline {
                 script {
                     echo "Auto-deploying ${env.BUILD_BRANCH} to ${env.TARGET_ENV}"
                     
-                    build job: 'eureka-cd',
-                        parameters: [
-                            string(name: 'ENVIRONMENT', value: env.TARGET_ENV),
-                            string(name: 'AMI_ID', value: env.AMI_ID),
-                            choice(name: 'ACTION', value: 'apply')
-                        ],
-                        wait: false
+                    // Check if the downstream job exists before triggering
+                    def jobExists = false
+                    try {
+                        def job = jenkins.model.Jenkins.instance.getItem('eureka-cd')
+                        if (job != null) {
+                            jobExists = true
+                            echo "Found eureka-cd job"
+                        } else {
+                            echo "WARNING: eureka-cd job not found"
+                        }
+                    } catch (Exception e) {
+                        echo "Error checking job existence: ${e.getMessage()}"
+                    }
+                    
+                    if (jobExists) {
+                        try {
+                            build job: 'eureka-cd',
+                                parameters: [
+                                    string(name: 'ENVIRONMENT', value: env.TARGET_ENV),
+                                    string(name: 'AMI_ID', value: env.AMI_ID),
+                                    string(name: 'ACTION', value: 'apply')
+                                ],
+                                wait: false
+                            echo "✅ Successfully triggered eureka-cd pipeline"
+                        } catch (Exception e) {
+                            echo "❌ Failed to trigger CD pipeline: ${e.getMessage()}"
+                            echo "Will continue without CD trigger - manual deployment required"
+                            error("CD pipeline trigger failed: ${e.getMessage()}")
+                        }
+                    } else {
+                        echo "=========================================="
+                        echo "⚠️ CD Pipeline Not Available"
+                        echo "=========================================="
+                        echo "eureka-cd job does not exist or is not accessible"
+                        echo "Manual deployment required with:"
+                        echo "  AMI ID: ${env.AMI_ID}"
+                        echo "  Environment: ${env.TARGET_ENV}"
+                        echo "=========================================="
+                    }
                 }
             }
         }
@@ -326,10 +356,8 @@ pipeline {
         stage('Manual Deploy Required') {
             when { 
                 expression { 
-                    params.ACTION == 'build-and-deploy' && 
-                    env.AUTO_DEPLOY == 'false' &&
-                    env.AMI_ID != null &&
-                    env.AMI_ID != ''
+                    (params.ACTION == 'build-and-deploy' && env.AUTO_DEPLOY == 'false') ||
+                    (params.ACTION == 'build-and-deploy' && env.AUTO_DEPLOY == 'true' && env.AMI_ID != null && env.AMI_ID != '' && currentBuild.result == 'FAILURE')
                 } 
             }
             steps {
@@ -346,6 +374,7 @@ pipeline {
                     echo "  Parameters:"
                     echo "    - ENVIRONMENT: ${env.TARGET_ENV}"
                     echo "    - AMI_ID: ${env.AMI_ID}"
+                    echo "    - ACTION: apply"
                     echo "=========================================="
                 }
             }
@@ -368,6 +397,7 @@ pipeline {
             echo "❌ CI Failed for branch ${env.BUILD_BRANCH}"
             echo "=========================================="
             script {
+                // Print packer output for debugging if it exists
                 dir('eureka/packer') {
                     sh '''
                         if [ -f build-output.txt ]; then
