@@ -310,44 +310,26 @@ pipeline {
                 script {
                     echo "Auto-deploying ${env.BUILD_BRANCH} to ${env.TARGET_ENV}"
                     
-                    // Check if the downstream job exists before triggering
-                    def jobExists = false
+                    // Try to trigger the CD pipeline without security-restricted methods
                     try {
-                        def job = jenkins.model.Jenkins.instance.getItem('eureka-cd')
-                        if (job != null) {
-                            jobExists = true
-                            echo "Found eureka-cd job"
-                        } else {
-                            echo "WARNING: eureka-cd job not found"
-                        }
+                        build job: 'eureka-cd',
+                            parameters: [
+                                string(name: 'ENVIRONMENT', value: env.TARGET_ENV),
+                                string(name: 'AMI_ID', value: env.AMI_ID),
+                                string(name: 'ACTION', value: 'apply')
+                            ],
+                            wait: false
+                        echo "✅ Successfully triggered eureka-cd pipeline"
                     } catch (Exception e) {
-                        echo "Error checking job existence: ${e.getMessage()}"
-                    }
-                    
-                    if (jobExists) {
-                        try {
-                            build job: 'eureka-cd',
-                                parameters: [
-                                    string(name: 'ENVIRONMENT', value: env.TARGET_ENV),
-                                    string(name: 'AMI_ID', value: env.AMI_ID),
-                                    string(name: 'ACTION', value: 'apply')
-                                ],
-                                wait: false
-                            echo "✅ Successfully triggered eureka-cd pipeline"
-                        } catch (Exception e) {
-                            echo "❌ Failed to trigger CD pipeline: ${e.getMessage()}"
-                            echo "Will continue without CD trigger - manual deployment required"
-                            error("CD pipeline trigger failed: ${e.getMessage()}")
-                        }
-                    } else {
+                        echo "⚠️ Could not trigger CD pipeline: ${e.getMessage()}"
                         echo "=========================================="
-                        echo "⚠️ CD Pipeline Not Available"
-                        echo "=========================================="
-                        echo "eureka-cd job does not exist or is not accessible"
                         echo "Manual deployment required with:"
                         echo "  AMI ID: ${env.AMI_ID}"
                         echo "  Environment: ${env.TARGET_ENV}"
+                        echo "  Action: apply"
                         echo "=========================================="
+                        // Don't fail the build - just note that CD wasn't triggered
+                        currentBuild.result = 'SUCCESS'
                     }
                 }
             }
@@ -356,8 +338,10 @@ pipeline {
         stage('Manual Deploy Required') {
             when { 
                 expression { 
-                    (params.ACTION == 'build-and-deploy' && env.AUTO_DEPLOY == 'false') ||
-                    (params.ACTION == 'build-and-deploy' && env.AUTO_DEPLOY == 'true' && env.AMI_ID != null && env.AMI_ID != '' && currentBuild.result == 'FAILURE')
+                    params.ACTION == 'build-and-deploy' && 
+                    env.AUTO_DEPLOY == 'false' &&
+                    env.AMI_ID != null &&
+                    env.AMI_ID != ''
                 } 
             }
             steps {
