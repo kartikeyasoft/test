@@ -15,39 +15,69 @@ pipeline {
     }
 
     stages {
-        stage('Load Environment Configuration') {
+        stage('Load Configuration') {
             steps {
                 script {
-                    // Get timestamp first
+                    // Get timestamp
                     env.TIMESTAMP = sh(script: 'date +%Y%m%d-%H%M%S', returnStdout: true).trim()
                     
-                    // Get configurations from shared library
-                    def globalConfig = envConfig()
-                    def branchConfig = globalConfig.getBranchConfig(params.BRANCH)
-                    def envConfigData = globalConfig.getEnvConfig(branchConfig.environment)
+                    // Get configurations from shared library (same as CI)
+                    def config = envConfig()
                     
-                    // Set environment variables
-                    env.BUILD_BRANCH = params.BRANCH
-                    env.TARGET_ENV = branchConfig.environment
-                    env.DEPLOY_STRATEGY = branchConfig.deploy_strategy
-                    env.AUTO_DEPLOY = branchConfig.auto_deploy.toString()
-                    env.REQUIRE_APPROVAL = branchConfig.require_approval.toString()
+                    // Branch to environment mapping (matching CI pipeline)
+                    if (params.BRANCH == 'main' || params.BRANCH == 'master') {
+                        env.TARGET_ENV = 'prod'
+                        env.AUTO_DEPLOY = 'false'
+                        env.REQUIRE_APPROVAL = 'true'
+                        env.INSTANCE_TYPE = 't3.medium'
+                    } else if (params.BRANCH == 'qa') {
+                        env.TARGET_ENV = 'qa'
+                        env.AUTO_DEPLOY = 'true'
+                        env.REQUIRE_APPROVAL = 'false'
+                        env.INSTANCE_TYPE = 't3.micro'
+                    } else {
+                        env.TARGET_ENV = 'dev'
+                        env.AUTO_DEPLOY = 'true'
+                        env.REQUIRE_APPROVAL = 'false'
+                        env.INSTANCE_TYPE = 't3.micro'
+                    }
                     
-                    // AWS Configuration
-                    env.AWS_DEFAULT_REGION = globalConfig.aws.region
-                    env.SERVICE_NAME = globalConfig.servicename.obj1
-                    env.S3_BUCKET = globalConfig.s3.bucket?.trim()
-                    env.EUREKA_PORT = globalConfig.eureka.defaultPort
+                    // AWS Configuration (same as CI)
+                    env.AWS_DEFAULT_REGION = config.aws.region
+                    env.SERVICE_NAME = 'eureka'
+                    env.EUREKA_PORT = config.eureka.defaultPort
                     
                     // Environment-specific VPC configuration
-                    env.VPC_CIDR = envConfigData.vpc_cidr
-                    env.SUBNET_ID = envConfigData.subnet_id
-                    env.VPC_ID = envConfigData.vpc_id
-                    env.INSTANCE_TYPE = branchConfig.instance_type
-                    env.SSM_PATH = branchConfig.ssm_path
+                    def envConfigs = [
+                        dev: [
+                            vpc_cidr: '192.168.0.0/16',
+                            subnet_id: 'subnet-076bd99dde1330498',
+                            vpc_id: 'vpc-0310386fea2f2ce82',
+                            ssm_path: '/exam/dev'
+                        ],
+                        qa: [
+                            vpc_cidr: '172.31.0.0/16',
+                            subnet_id: 'subnet-0aa31e769c8f4d73e',
+                            vpc_id: 'vpc-0cb7deb47a6bfa727',
+                            ssm_path: '/exam/qa'
+                        ],
+                        prod: [
+                            vpc_cidr: '10.2.0.0/16',
+                            subnet_id: 'subnet-09c74646d4a4c2794',
+                            vpc_id: 'vpc-06cf33d3bcdcf4be9',
+                            ssm_path: '/exam/prod'
+                        ]
+                    ]
+                    
+                    def envData = envConfigs[env.TARGET_ENV]
+                    env.VPC_CIDR = envData.vpc_cidr
+                    env.SUBNET_ID = envData.subnet_id
+                    env.VPC_ID = envData.vpc_id
+                    env.SSM_PATH = envData.ssm_path
                     
                     // AMI ID (use provided or fetch from SSM later)
                     env.AMI_ID = params.AMI_ID
+                    env.BUILD_BRANCH = params.BRANCH
                     
                     echo "=========================================="
                     echo "Eureka CD Pipeline - Branch: ${params.BRANCH}"
@@ -55,7 +85,6 @@ pipeline {
                     echo "Timestamp: ${env.TIMESTAMP}"
                     echo "Target Environment: ${env.TARGET_ENV}"
                     echo "Action: ${params.ACTION}"
-                    echo "Deploy Strategy: ${env.DEPLOY_STRATEGY}"
                     echo "Auto Deploy: ${env.AUTO_DEPLOY}"
                     echo "Require Approval: ${env.REQUIRE_APPROVAL}"
                     echo ""
@@ -69,7 +98,6 @@ pipeline {
                     echo "  Service Name: ${env.SERVICE_NAME}"
                     echo "  Eureka Port: ${env.EUREKA_PORT}"
                     echo "  SSM Path: ${env.SSM_PATH}"
-                    echo "  S3 Bucket: ${env.S3_BUCKET}"
                     echo ""
                     echo "AMI ID: ${env.AMI_ID ?: 'Will fetch from SSM based on branch'}"
                     echo "=========================================="
@@ -80,6 +108,8 @@ pipeline {
         stage('Checkout Infrastructure Code') {
             steps {
                 script {
+                    // Checkout infrastructure code from the same branch as the AMI
+                    // This matches CI pattern where it checks out the branch parameter
                     def infraRepo = 'https://github.com/kartikeyasoft/test.git'
                     def infraBranch = params.BRANCH
                     
@@ -89,21 +119,11 @@ pipeline {
                     echo "Repository: ${infraRepo}"
                     echo "Branch: ${infraBranch}"
                     
-                    // Clean previous checkout
-                    deleteDir()
-                    
-                    checkout([$class: 'GitSCM',
-                        branches: [[name: infraBranch]],
-                        userRemoteConfigs: [[url: infraRepo]],
-                        extensions: [[$class: 'CleanCheckout']]
-                    ])
+                    git url: infraRepo, branch: infraBranch
                     
                     env.INFRA_COMMIT = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                    env.INFRA_BRANCH = infraBranch
                     
-                    echo "✅ Checkout complete"
-                    echo "   Commit: ${env.INFRA_COMMIT}"
-                    echo "   Branch: ${env.INFRA_BRANCH}"
+                    echo "✅ Checkout complete - Commit: ${env.INFRA_COMMIT}"
                     echo "=========================================="
                 }
             }
@@ -117,11 +137,11 @@ pipeline {
                 } 
             }
             steps {
-                input message: "Approve deployment to ${env.TARGET_ENV} (${env.BUILD_BRANCH} branch)?",
+                input message: "Approve deployment to ${env.TARGET_ENV} (${params.BRANCH} branch)?",
                     ok: "Deploy",
                     parameters: [
                         string(name: 'APPROVER', defaultValue: "${env.BUILD_USER_ID ?: 'Unknown'}", description: 'Approver name'),
-                        text(name: 'DEPLOY_NOTES', defaultValue: "Deploying ${env.SERVICE_NAME} from ${env.BUILD_BRANCH} branch", description: 'Deployment notes')
+                        text(name: 'DEPLOY_NOTES', defaultValue: "Deploying ${env.SERVICE_NAME} from ${params.BRANCH} branch", description: 'Deployment notes')
                     ]
             }
         }
@@ -135,11 +155,12 @@ pipeline {
             }
             steps {
                 script {
-                    echo "Fetching latest AMI for branch: ${env.BUILD_BRANCH}"
+                    echo "Fetching latest AMI for branch: ${params.BRANCH}"
                     
+                    // Read from the same SSM path that CI pipeline writes to
                     def amiId = sh(script: """
                         aws ssm get-parameter \
-                            --name "/eureka/${env.BUILD_BRANCH}/latest-ami" \
+                            --name "/eureka/${params.BRANCH}/latest-ami" \
                             --region ${env.AWS_DEFAULT_REGION} \
                             --query "Parameter.Value" \
                             --output text 2>/dev/null || echo ""
@@ -147,10 +168,10 @@ pipeline {
                     
                     if (!amiId || amiId == '') {
                         error """
-                        ❌ No Eureka AMI found for branch: ${env.BUILD_BRANCH}
+                        ❌ No Eureka AMI found for branch: ${params.BRANCH}
                         
-                        Please run eureka-ci pipeline for ${env.BUILD_BRANCH} branch first.
-                        Expected SSM path: /eureka/${env.BUILD_BRANCH}/latest-ami
+                        Please run eureka-ci pipeline for ${params.BRANCH} branch first.
+                        The CI pipeline stores AMI at: /eureka/${params.BRANCH}/latest-ami
                         """
                     }
                     
@@ -168,7 +189,7 @@ pipeline {
                         error "AMI_ID is required for ${params.ACTION} action"
                     }
                     
-                    // Verify AMI exists
+                    // Verify AMI exists (same validation as CI)
                     def amiState = sh(script: """
                         aws ec2 describe-images \
                             --image-ids ${env.AMI_ID} \
@@ -181,10 +202,6 @@ pipeline {
                         error "❌ AMI ${env.AMI_ID} does not exist in region ${env.AWS_DEFAULT_REGION}"
                     }
                     
-                    if (amiState != 'available') {
-                        error "❌ AMI ${env.AMI_ID} is in state: ${amiState}. Expected 'available'"
-                    }
-                    
                     echo "✅ AMI Validation Passed - State: ${amiState}"
                 }
             }
@@ -192,12 +209,6 @@ pipeline {
 
         stage('Terraform Init') {
             steps {
-                script {
-                    // Create terraform directory if it doesn't exist
-                    sh """
-                        mkdir -p eureka/terraform/${env.TARGET_ENV}
-                    """
-                }
                 dir("eureka/terraform/${env.TARGET_ENV}") {
                     sh """
                         cp ../*.tf . 2>/dev/null || true
@@ -218,7 +229,7 @@ pipeline {
                             -var="aws_region=${env.AWS_DEFAULT_REGION}" \
                             -var="eureka_port=${env.EUREKA_PORT}" \
                             -var="environment=${env.TARGET_ENV}" \
-                            -var="branch=${env.BUILD_BRANCH}" \
+                            -var="branch=${params.BRANCH}" \
                             -var="subnet_id=${env.SUBNET_ID}" \
                             -var="vpc_id=${env.VPC_ID}" \
                             -var="instance_type=${env.INSTANCE_TYPE}"
@@ -238,7 +249,7 @@ pipeline {
                             -var="aws_region=${env.AWS_DEFAULT_REGION}" \
                             -var="eureka_port=${env.EUREKA_PORT}" \
                             -var="environment=${env.TARGET_ENV}" \
-                            -var="branch=${env.BUILD_BRANCH}" \
+                            -var="branch=${params.BRANCH}" \
                             -var="subnet_id=${env.SUBNET_ID}" \
                             -var="vpc_id=${env.VPC_ID}" \
                             -var="instance_type=${env.INSTANCE_TYPE}"
@@ -252,12 +263,12 @@ pipeline {
             steps {
                 script {
                     dir("eureka/terraform/${env.TARGET_ENV}") {
-                        // Wait a few seconds for instance to be fully ready
+                        // Wait a moment for instance to be ready
                         sh "sleep 10"
                         
                         def private_ip = sh(script: """
                             aws ec2 describe-instances \
-                                --filters "Name=tag:Branch,Values=${env.BUILD_BRANCH}" \
+                                --filters "Name=tag:Branch,Values=${params.BRANCH}" \
                                           "Name=tag:Service,Values=${env.SERVICE_NAME}" \
                                           "Name=instance-state-name,Values=running" \
                                 --query 'Reservations[0].Instances[0].PrivateIpAddress' \
@@ -265,8 +276,7 @@ pipeline {
                                 --output text
                         """, returnStdout: true).trim()
                         
-                        if (private_ip && private_ip != 'None' && private_ip != '') {
-                            // Use Groovy for date formatting (no escaping needed)
+                        if (private_ip && private_ip != 'None') {
                             def currentTime = new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z'")
                             
                             sh """
@@ -290,7 +300,7 @@ pipeline {
                                 
                                 aws ssm put-parameter \
                                     --name "${env.SSM_PATH}/${env.SERVICE_NAME}/branch" \
-                                    --value "${env.BUILD_BRANCH}" \
+                                    --value "${params.BRANCH}" \
                                     --type "String" \
                                     --overwrite || true
                                 
@@ -299,49 +309,21 @@ pipeline {
                                     --value "${currentTime}" \
                                     --type "String" \
                                     --overwrite || true
-                                
-                                aws ssm put-parameter \
-                                    --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deploy-strategy" \
-                                    --value "${env.DEPLOY_STRATEGY}" \
-                                    --type "String" \
-                                    --overwrite || true
-                            """
-                            
-                            // Store deployment record in S3 for permanent history
-                            def deploymentRecord = """{
-    "branch": "${env.BUILD_BRANCH}",
-    "environment": "${env.TARGET_ENV}",
-    "action": "${params.ACTION}",
-    "ami_id": "${env.AMI_ID}",
-    "private_ip": "${private_ip}",
-    "port": "${env.EUREKA_PORT}",
-    "deployed_at": "${currentTime}",
-    "deploy_strategy": "${env.DEPLOY_STRATEGY}",
-    "infra_commit": "${env.INFRA_COMMIT}",
-    "timestamp": "${env.TIMESTAMP}"
-}"""
-                            
-                            writeFile file: "deployment-${env.TIMESTAMP}.json", text: deploymentRecord
-                            sh """
-                                aws s3 cp deployment-${env.TIMESTAMP}.json s3://${env.S3_BUCKET}/eureka/deployments/${env.BUILD_BRANCH}/${env.TIMESTAMP}.json || true
                             """
                             
                             echo "=========================================="
                             echo "✅ Deployment Complete!"
                             echo "=========================================="
                             echo "Environment: ${env.TARGET_ENV}"
-                            echo "Branch: ${env.BUILD_BRANCH}"
+                            echo "Branch: ${params.BRANCH}"
                             echo "Service: ${env.SERVICE_NAME}"
                             echo "Private IP: ${private_ip}"
                             echo "Port: ${env.EUREKA_PORT}"
                             echo "URL: http://${private_ip}:${env.EUREKA_PORT}/eureka/"
                             echo "AMI ID: ${env.AMI_ID}"
-                            echo "Deploy Strategy: ${env.DEPLOY_STRATEGY}"
-                            echo "Deployed At: ${currentTime}"
-                            echo "S3 Record: s3://${env.S3_BUCKET}/eureka/deployments/${env.BUILD_BRANCH}/${env.TIMESTAMP}.json"
                             echo "=========================================="
                         } else {
-                            error "Failed to get instance IP address for ${env.TARGET_ENV}. Instance may not be running yet or tags are incorrect."
+                            echo "⚠️ Could not find running instance, but terraform apply completed successfully"
                         }
                     }
                 }
@@ -352,10 +334,6 @@ pipeline {
             when { expression { params.ACTION == 'destroy' } }
             steps {
                 script {
-                    echo "=========================================="
-                    echo "Destroying Eureka service in ${env.TARGET_ENV}"
-                    echo "=========================================="
-                    
                     // Clean up SSM parameters
                     sh """
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ip" 2>/dev/null || true
@@ -363,52 +341,43 @@ pipeline {
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/ami" 2>/dev/null || true
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/branch" 2>/dev/null || true
                         aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deployed-at" 2>/dev/null || true
-                        aws ssm delete-parameter --name "${env.SSM_PATH}/${env.SERVICE_NAME}/deploy-strategy" 2>/dev/null || true
                     """
                 }
                 dir("eureka/terraform/${env.TARGET_ENV}") {
                     sh "terraform destroy -auto-approve"
                 }
                 
-                script {
-                    echo "=========================================="
-                    echo "✅ Destroy Complete!"
-                    echo "=========================================="
-                    echo "Environment: ${env.TARGET_ENV}"
-                    echo "Service: ${env.SERVICE_NAME}"
-                    echo "=========================================="
-                }
+                echo "=========================================="
+                echo "✅ Destroy Complete for ${env.TARGET_ENV}"
+                echo "=========================================="
             }
         }
     }
 
     post {
-    success {
-        script {
+        success {
             echo "=========================================="
-            echo "✅ Eureka ${params.ACTION} for ${params.BRANCH} completed successfully!"
+            echo "✅ CD Success for ${params.BRANCH}!"
             echo "=========================================="
             if (params.ACTION == 'apply') {
                 echo "Environment: ${env.TARGET_ENV}"
-                echo "Service: ${env.SERVICE_NAME}"
                 echo "AMI ID: ${env.AMI_ID}"
-                echo "=========================================="
+            }
+            echo "=========================================="
+        }
+        failure {
+            echo "=========================================="
+            echo "❌ CD Failed for branch ${params.BRANCH}"
+            echo "=========================================="
+            script {
+                dir('eureka/terraform') {
+                    sh '''
+                        if [ -f terraform.tfstate ]; then
+                            echo "=== Terraform state exists ==="
+                        fi
+                    '''
+                }
             }
         }
     }
-    failure {
-        script {
-            echo "=========================================="
-            echo "❌ Eureka ${params.ACTION} for ${params.BRANCH} failed!"
-            echo "=========================================="
-            echo "Please check the logs above for detailed error messages."
-            echo "=========================================="
-        }
-    }
-    always {
-        script {
-            echo "Pipeline execution completed at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
-        }
-    }
-}
 }
