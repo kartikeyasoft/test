@@ -383,7 +383,8 @@ pipeline {
     }
 
     post {
-        success {
+    success {
+        script {
             echo "=========================================="
             echo "✅ Eureka ${params.ACTION} for ${params.BRANCH} completed successfully!"
             echo "=========================================="
@@ -394,15 +395,20 @@ pipeline {
                 echo "=========================================="
             }
         }
-        failure {
+    }
+    failure {
+        script {
             echo "=========================================="
             echo "❌ Eureka ${params.ACTION} for ${params.BRANCH} failed!"
             echo "=========================================="
             echo "Please check the logs above for detailed error messages."
             echo "=========================================="
         }
-        always {
+    }
+    always {
+        script {
             echo "Pipeline execution completed at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
         }
     }
+}
 }
