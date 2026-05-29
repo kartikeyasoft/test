@@ -138,19 +138,34 @@ pipeline {
                 dir('eureka') {
                     script {
                         def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
-                        def nexusPath = "${env.NEXUS_URL}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
                         
+                        // 1. Clean the base URL by stripping any accidental trailing slashes
+                        def nexusBaseUrl = env.NEXUS_URL.trim().replaceAll('/$', '')
+                        
+                        // 2. Safely construct the path to prevent double '/repository/maven-releases/' strings
+                        def nexusPath = ""
+                        if (nexusBaseUrl.contains('/repository/')) {
+                            nexusPath = "${nexusBaseUrl}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
+                        } else {
+                            nexusPath = "${nexusBaseUrl}/repository/maven-releases/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
+                        }
+                        
+                        echo "🚀 Uploading artifact to Nexus: ${nexusPath}"
+                        
+                        // 3. Bind credentials (using your 'nexus-creds' ID)
                         withCredentials([usernamePassword(credentialsId: 'nexus-creds', 
-                                                        usernameVariable: 'NEXUS_USER', 
-                                                        passwordVariable: 'NEXUS_PASS')]) {
+                                                         usernameVariable: 'NEXUS_USER', 
+                                                         passwordVariable: 'NEXUS_PASS')]) {
+                            // 4. Added backslashes (\$) to mask secrets perfectly in build console logs
                             sh """
-                                curl -f -u ${NEXUS_USER}:${NEXUS_PASS} --upload-file ${jarFile} ${nexusPath}
+                                curl -f -u \${NEXUS_USER}:\${NEXUS_PASS} --upload-file ${jarFile} ${nexusPath}
                             """
                         }
                     }
                 }
             }
         }
+
         stage('Bake Golden AMI') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
