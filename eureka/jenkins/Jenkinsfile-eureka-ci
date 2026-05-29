@@ -138,7 +138,7 @@ pipeline {
                 dir('eureka') {
                     script {
                         def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
-                        def nexusPath = "${env.NEXUS_URL}/repository/maven-releases/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
+                        def nexusPath = "${env.NEXUS_URL}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
                         
                         echo "🔑 Fetching Nexus tokens from AWS Secrets Manager..."
                         
