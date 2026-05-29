@@ -137,39 +137,13 @@ pipeline {
             steps {
                 dir('eureka') {
                     script {
-                        def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
-                        
-                        // Clean the URL structure cleanly
-                        def nexusBaseUrl = env.NEXUS_URL.trim().replaceAll('/$', '')
-                        def nexusPath = ""
-                        if (nexusBaseUrl.contains('/repository/')) {
-                            nexusPath = "${nexusBaseUrl}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
-                        } else {
-                            nexusPath = "${nexusBaseUrl}/repository/maven-releases/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
-                        }
-                        
-                        echo "🔑 Fetching Nexus credentials from AWS Secrets Manager..."
-                        
-                        def secretJson = sh(
-                            script: "aws secretsmanager get-secret-value --secret-id /prod/infrastructure/nexus --query SecretString --output text --region ${env.AWS_DEFAULT_REGION}",
-                            returnStdout: true
-                        ).trim()
-                        
+                        echo "🔑 Fetching tokens from AWS Secrets Manager..."
+                        def secretJson = sh(script: "aws secretsmanager get-secret-value --secret-id /prod/infrastructure/nexus --query SecretString --output text --region ${env.AWS_DEFAULT_REGION}", returnStdout: true).trim()
                         def secretMap = new groovy.json.JsonSlurper().parseText(secretJson)
-                        
-                        withEnv(["USER_VAL=${secretMap.username}", "PASS_VAL=${secretMap.password}"]) {
-                            echo "🚀 Uploading artifact to Nexus: ${nexusPath}"
-                            
-                            // HARDENED CURL FLAGS FOR LOCAL-TO-AWS DATA TRANSFERS
-                            sh '''
-                                curl -v \
-                                     --connect-timeout 15 \
-                                     --max-time 120 \
-                                     --no-keepalive \
-                                     --limit-rate 500k \
-                                     -f -u "$USER_VAL:$PASS_VAL" \
-                                     --upload-file ''' + jarFile + ''' ''' + nexusPath + '''
-                            '''
+
+                        withEnv(["NEXUS_USER=${secretMap.username}", "NEXUS_PASS=${secretMap.password}"]) {
+                            echo "🚀 Shipping artifact via Maven Deployment Engine..."
+                            sh 'mvn deploy -Dmaven.test.skip=true -Dusername=$NEXUS_USER -Dpassword=$NEXUS_PASS'
                         }
                     }
                 }
