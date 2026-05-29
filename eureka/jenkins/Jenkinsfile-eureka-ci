@@ -139,15 +139,31 @@ pipeline {
                 dir('eureka') {
                     script {
                         def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
-                        def nexusPath = "${env.NEXUS_URL}/repository/maven-releases/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
+                        
+                        // Debug: Print the URL being used
+                        echo "Debug: NEXUS_URL = ${env.NEXUS_URL}"
+                        
+                        // Remove trailing slash if present
+                        def baseUrl = env.NEXUS_URL.trim().replaceAll(/\/$/, '')
+                        
+                        // Construct proper path (remove duplicate repository path)
+                        def nexusPath
+                        if (baseUrl.contains('/repository/maven-releases')) {
+                            // URL already has repository path
+                            nexusPath = "${baseUrl}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
+                        } else {
+                            // URL doesn't have repository path
+                            nexusPath = "${baseUrl}/repository/maven-releases/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
+                        }
+                        
+                        echo "📦 Full Nexus Path: ${nexusPath}"
                         
                         if (!fileExists(jarFile)) {
-                            error "JAR file not found: ${jarFile}"
+                            error "❌ JAR file not found: ${jarFile}"
                         }
                         
                         echo "🔑 Fetching Nexus credentials from AWS Secrets Manager..."
                         
-                        // AWS CLI will automatically use the IAM role
                         def secretJson = sh(
                             script: """
                                 aws secretsmanager get-secret-value \
@@ -162,13 +178,22 @@ pipeline {
                         def secretMap = new groovy.json.JsonSlurper().parseText(secretJson)
                         
                         echo "🚀 Uploading artifact to Nexus Repository..."
-                        sh """
-                            curl -f -u "${secretMap.username}:${secretMap.password}" \
-                                --upload-file ${jarFile} \
-                                ${nexusPath}
-                        """
                         
+                        // Add verbose output and better error handling
+                        def uploadResult = sh(
+                            script: """
+                                curl -f -u "${secretMap.username}:${secretMap.password}" \
+                                    --upload-file ${jarFile} \
+                                    ${nexusPath} \
+                                    --write-out "\\nHTTP Status: %{http_code}\\n" \
+                                    --progress-bar
+                            """,
+                            returnStdout: true
+                        )
+                        
+                        echo "${uploadResult}"
                         echo "✅ Successfully deployed to Nexus"
+                        echo "📍 Location: ${nexusPath}"
                     }
                 }
             }
