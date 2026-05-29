@@ -138,16 +138,11 @@ pipeline {
             steps {
                 dir('eureka') {
                     script {
-                        def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
-                        def nexusPath = "${env.NEXUS_URL}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
-                        
-                        withCredentials([usernamePassword(credentialsId: 'nexus-credentials', 
-                                                        usernameVariable: 'NEXUS_USER', 
-                                                        passwordVariable: 'NEXUS_PASS')]) {
-                            sh """
-                                curl -f -u ${NEXUS_USER}:${NEXUS_PASS} --upload-file ${jarFile} ${nexusPath}
-                            """
-                        }
+                        nexusDeploy(
+                            jarFile: "target/eureka-${env.SERVICE_VERSION}.jar",
+                            nexusPath: "${env.NEXUS_URL}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar",
+                            region: env.AWS_DEFAULT_REGION
+                        )
                     }
                 }
             }
