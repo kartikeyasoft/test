@@ -140,31 +140,17 @@ pipeline {
                         def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
                         def nexusPath = "${env.NEXUS_URL}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
                         
-                        echo "🔑 Fetching Nexus tokens from AWS Secrets Manager..."
-                        
-                        // 1. Fetch raw JSON payload from AWS securely
-                        def secretJson = sh(
-                            script: "aws secretsmanager get-secret-value --secret-id /prod/infrastructure/nexus --query SecretString --output text --region ${env.AWS_DEFAULT_REGION}",
-                            returnStdout: true
-                        ).trim()
-                        
-                        // 2. Parse the JSON payload 
-                        def secretMap = new groovy.json.JsonSlurper().parseText(secretJson)
-                        
-                        // 3. Inject variables into a localized environment block to mask values in logs
-                        withEnv(["NEXUS_USER=${secretMap.username}", "NEXUS_PASS=${secretMap.password}"]) {
-                            echo "🚀 Uploading artifact to Nexus..."
+                        withCredentials([usernamePassword(credentialsId: 'nexus-creds', 
+                                                        usernameVariable: 'NEXUS_USER', 
+                                                        passwordVariable: 'NEXUS_PASS')]) {
                             sh """
-                                curl -f -u \${NEXUS_USER}:\${NEXUS_PASS} \
-                                    --upload-file ${jarFile} \
-                                    ${nexusPath}
+                                curl -f -u ${NEXUS_USER}:${NEXUS_PASS} --upload-file ${jarFile} ${nexusPath}
                             """
                         }
                     }
                 }
             }
         }
-
         stage('Bake Golden AMI') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
