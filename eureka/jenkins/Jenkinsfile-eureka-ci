@@ -123,14 +123,11 @@ pipeline {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 dir('eureka') {
-                    withSonarQubeEnv('sonar') {
-                        sh """
-                            mvn sonar:sonar \
-                                -Dsonar.projectKey=com.ksapp:eureka \
-                                -Dsonar.projectName="Eureka_${env.BUILD_BRANCH}" \
-                                -Dsonar.projectVersion=${env.SERVICE_VERSION}
-                        """
-                    }
+                    // All complex configurations, token injections, and tool evaluations are managed here:
+                    sonarScan(
+                        projectKey: 'com.ksapp:eureka',
+                        projectName: "Eureka_${env.BUILD_BRANCH}"
+                    )
                 }
             }
         }
