@@ -138,11 +138,37 @@ pipeline {
             steps {
                 dir('eureka') {
                     script {
-                        nexusDeploy(
-                            jarFile: "target/eureka-${env.SERVICE_VERSION}.jar",
-                            nexusPath: "${env.NEXUS_URL}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar",
-                            region: env.AWS_DEFAULT_REGION
-                        )
+                        def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
+                        def nexusPath = "${env.NEXUS_URL}/repository/maven-releases/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
+                        
+                        if (!fileExists(jarFile)) {
+                            error "JAR file not found: ${jarFile}"
+                        }
+                        
+                        echo "🔑 Fetching Nexus credentials from AWS Secrets Manager..."
+                        
+                        // AWS CLI will automatically use the IAM role
+                        def secretJson = sh(
+                            script: """
+                                aws secretsmanager get-secret-value \
+                                    --secret-id "/prod/infrastructure/nexus" \
+                                    --region ${env.AWS_DEFAULT_REGION} \
+                                    --query 'SecretString' \
+                                    --output text
+                            """,
+                            returnStdout: true
+                        ).trim()
+                        
+                        def secretMap = new groovy.json.JsonSlurper().parseText(secretJson)
+                        
+                        echo "🚀 Uploading artifact to Nexus Repository..."
+                        sh """
+                            curl -f -u "${secretMap.username}:${secretMap.password}" \
+                                --upload-file ${jarFile} \
+                                ${nexusPath}
+                        """
+                        
+                        echo "✅ Successfully deployed to Nexus"
                     }
                 }
             }
