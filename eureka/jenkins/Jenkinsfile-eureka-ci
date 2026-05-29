@@ -139,7 +139,7 @@ pipeline {
                     script {
                         def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
                         
-                        // Clean the URL and strip trailing slashes safely
+                        // Clean the URL structure cleanly
                         def nexusBaseUrl = env.NEXUS_URL.trim().replaceAll('/$', '')
                         def nexusPath = ""
                         if (nexusBaseUrl.contains('/repository/')) {
@@ -157,13 +157,18 @@ pipeline {
                         
                         def secretMap = new groovy.json.JsonSlurper().parseText(secretJson)
                         
-                        // Bind variables inside withEnv using distinct single quotes below
                         withEnv(["USER_VAL=${secretMap.username}", "PASS_VAL=${secretMap.password}"]) {
-                            echo "🚀 Uploading artifact to Nexus..."
+                            echo "🚀 Uploading artifact to Nexus: ${nexusPath}"
                             
-                            // USING SINGLE QUOTES (''') FOR SH ENSURES PERFECT CONSOLE LOG MASKING
+                            // HARDENED CURL FLAGS FOR LOCAL-TO-AWS DATA TRANSFERS
                             sh '''
-                                curl -f -u "$USER_VAL:$PASS_VAL" --upload-file ''' + jarFile + ''' ''' + nexusPath + '''
+                                curl -v \
+                                     --connect-timeout 15 \
+                                     --max-time 120 \
+                                     --no-keepalive \
+                                     --limit-rate 500k \
+                                     -f -u "$USER_VAL:$PASS_VAL" \
+                                     --upload-file ''' + jarFile + ''' ''' + nexusPath + '''
                             '''
                         }
                     }
