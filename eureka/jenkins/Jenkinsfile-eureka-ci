@@ -139,61 +139,38 @@ pipeline {
                 dir('eureka') {
                     script {
                         def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
-                        
-                        // Debug: Print the URL being used
-                        echo "Debug: NEXUS_URL = ${env.NEXUS_URL}"
-                        
-                        // Remove trailing slash if present
-                        def baseUrl = env.NEXUS_URL.trim().replaceAll(/\/$/, '')
-                        
-                        // Construct proper path (remove duplicate repository path)
-                        def nexusPath
-                        if (baseUrl.contains('/repository/maven-releases')) {
-                            // URL already has repository path
-                            nexusPath = "${baseUrl}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
-                        } else {
-                            // URL doesn't have repository path
-                            nexusPath = "${baseUrl}/repository/maven-releases/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
-                        }
-                        
-                        echo "📦 Full Nexus Path: ${nexusPath}"
+                        def nexusPath = "${env.NEXUS_URL}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
                         
                         if (!fileExists(jarFile)) {
                             error "❌ JAR file not found: ${jarFile}"
                         }
                         
-                        echo "🔑 Fetching Nexus credentials from AWS Secrets Manager..."
+                        echo "🔑 Fetching Nexus credentials from HashiCorp Vault..."
                         
-                        def secretJson = sh(
+                        // Direct API call to Vault (no plugin needed)
+                        def vaultResponse = sh(
                             script: """
-                                aws secretsmanager get-secret-value \
-                                    --secret-id "/prod/infrastructure/nexus" \
-                                    --region ${env.AWS_DEFAULT_REGION} \
-                                    --query 'SecretString' \
-                                    --output text
+                                curl -s -H "X-Vault-Token: root" \
+                                    http://54.83.105.236:8200/v1/secret/data/nexus
                             """,
                             returnStdout: true
                         ).trim()
                         
-                        def secretMap = new groovy.json.JsonSlurper().parseText(secretJson)
+                        // Parse JSON response
+                        def vaultData = readJSON text: vaultResponse
+                        def nexusUser = vaultData.data.data.username
+                        def nexusPass = vaultData.data.data.password
                         
+                        echo "✅ Credentials retrieved from Vault"
                         echo "🚀 Uploading artifact to Nexus Repository..."
                         
-                        // Add verbose output and better error handling
-                        def uploadResult = sh(
-                            script: """
-                                curl -f -u "${secretMap.username}:${secretMap.password}" \
-                                    --upload-file ${jarFile} \
-                                    ${nexusPath} \
-                                    --write-out "\\nHTTP Status: %{http_code}\\n" \
-                                    --progress-bar
-                            """,
-                            returnStdout: true
-                        )
+                        sh """
+                            curl -f -u "${nexusUser}:${nexusPass}" \
+                                --upload-file ${jarFile} \
+                                ${nexusPath}
+                        """
                         
-                        echo "${uploadResult}"
                         echo "✅ Successfully deployed to Nexus"
-                        echo "📍 Location: ${nexusPath}"
                     }
                 }
             }
