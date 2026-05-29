@@ -16,7 +16,7 @@ pipeline {
     environment {
         PATH = "/usr/bin:${env.PATH}"
         
-        
+        NEXUS_CREDS = credentials('nexus-credentials')
         AWS_CONFIG_FILE = '/var/lib/jenkins/.aws/config'
     }
 
@@ -131,19 +131,22 @@ pipeline {
                 }
             }
         }
+        
 
         stage('Deploy to Nexus') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 dir('eureka') {
                     script {
-                        echo "🔑 Fetching tokens from AWS Secrets Manager..."
-                        def secretJson = sh(script: "aws secretsmanager get-secret-value --secret-id /prod/infrastructure/nexus --query SecretString --output text --region ${env.AWS_DEFAULT_REGION}", returnStdout: true).trim()
-                        def secretMap = new groovy.json.JsonSlurper().parseText(secretJson)
-
-                        withEnv(["NEXUS_USER=${secretMap.username}", "NEXUS_PASS=${secretMap.password}"]) {
-                            echo "🚀 Shipping artifact via Maven Deployment Engine..."
-                            sh 'mvn deploy -Dmaven.test.skip=true -Dusername=$NEXUS_USER -Dpassword=$NEXUS_PASS'
+                        def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
+                        def nexusPath = "${env.NEXUS_URL}/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
+                        
+                        withCredentials([usernamePassword(credentialsId: 'nexus-credentials', 
+                                                        usernameVariable: 'NEXUS_USER', 
+                                                        passwordVariable: 'NEXUS_PASS')]) {
+                            sh """
+                                curl -f -u ${NEXUS_USER}:${NEXUS_PASS} --upload-file ${jarFile} ${nexusPath}
+                            """
                         }
                     }
                 }
