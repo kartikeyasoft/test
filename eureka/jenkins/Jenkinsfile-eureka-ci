@@ -16,7 +16,7 @@ pipeline {
     environment {
         PATH = "/usr/bin:${env.PATH}"
         
-        NEXUS_CREDS = credentials('nexus-credentials')
+        
         AWS_CONFIG_FILE = '/var/lib/jenkins/.aws/config'
     }
 
