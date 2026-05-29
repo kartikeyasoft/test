@@ -170,7 +170,7 @@ pipeline {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 script {
-                    dir('eureka/packer') {
+                    dir('eureka/packe') {
                         sh '''
                             echo "=== Building AMI with branch name ==="
                             echo "Branch: ${BUILD_BRANCH}"
