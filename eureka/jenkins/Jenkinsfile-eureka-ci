@@ -139,7 +139,7 @@ pipeline {
                     script {
                         def jarFile = "target/eureka-${env.SERVICE_VERSION}.jar"
                         
-                        // Clean and safely construct the final path
+                        // Clean the URL and strip trailing slashes safely
                         def nexusBaseUrl = env.NEXUS_URL.trim().replaceAll('/$', '')
                         def nexusPath = ""
                         if (nexusBaseUrl.contains('/repository/')) {
@@ -148,9 +148,8 @@ pipeline {
                             nexusPath = "${nexusBaseUrl}/repository/maven-releases/com/ksapp/eureka/${env.SERVICE_VERSION}/eureka-${env.SERVICE_VERSION}.jar"
                         }
                         
-                        echo "🔑 Fetching Nexus credentials dynamically from AWS Secrets Manager..."
+                        echo "🔑 Fetching Nexus credentials from AWS Secrets Manager..."
                         
-                        // Pull from your AWS Secret Vault payload
                         def secretJson = sh(
                             script: "aws secretsmanager get-secret-value --secret-id /prod/infrastructure/nexus --query SecretString --output text --region ${env.AWS_DEFAULT_REGION}",
                             returnStdout: true
@@ -158,11 +157,14 @@ pipeline {
                         
                         def secretMap = new groovy.json.JsonSlurper().parseText(secretJson)
                         
-                        withEnv(["NEXUS_USER=${secretMap.username}", "NEXUS_PASS=${secretMap.password}"]) {
-                            echo "🚀 Uploading artifact to Nexus: ${nexusPath}"
-                            sh """
-                                curl -f -u \theNEXUS_USER:\${NEXUS_PASS} --upload-file ${jarFile} ${nexusPath}
-                            """
+                        // Bind variables inside withEnv using distinct single quotes below
+                        withEnv(["USER_VAL=${secretMap.username}", "PASS_VAL=${secretMap.password}"]) {
+                            echo "🚀 Uploading artifact to Nexus..."
+                            
+                            // USING SINGLE QUOTES (''') FOR SH ENSURES PERFECT CONSOLE LOG MASKING
+                            sh '''
+                                curl -f -u "$USER_VAL:$PASS_VAL" --upload-file ''' + jarFile + ''' ''' + nexusPath + '''
+                            '''
                         }
                     }
                 }
