@@ -38,6 +38,31 @@ pipeline {
             }
         }
 
+        stage('Gitleaks Security Scan') {
+            steps {
+                script {
+                    echo "=========================================="
+                    echo "🔍 Running Gitleaks Secret Detection"
+                    echo "=========================================="
+                    
+                    // Determine if we should fail on findings based on branch
+                    def shouldFailOnFindings = (env.BUILD_BRANCH in ['main', 'master'])
+                    
+                    // Call shared library step
+                    gitleaksScan(
+                        failOnFindings: shouldFailOnFindings,
+                        configPath: '.gitleaks.toml',
+                        reportFormat: 'json',
+                        sourcePath: '.'
+                    )
+                    
+                    echo "=========================================="
+                    echo "✅ Gitleaks Scan Completed"
+                    echo "=========================================="
+                }
+            }
+        }
+
         stage('Setup Branch Config') {
             steps {
                 script {
