@@ -48,12 +48,10 @@ pipeline {
                     // Determine if we should fail on findings based on branch
                     def shouldFailOnFindings = (env.BUILD_BRANCH in ['main', 'master'])
                     
-                    // Call shared library step
+                    // Call shared library step - NO configPath (uses central config from shared lib)
                     gitleaksScan(
-                        failOnFindings: shouldFailOnFindings,
-                        configPath: '.gitleaks.toml',
-                        reportFormat: 'json',
-                        sourcePath: '.'
+                        failOnFindings: shouldFailOnFindings
+                        // configPath is now optional - defaults to shared library config
                     )
                     
                     echo "=========================================="
