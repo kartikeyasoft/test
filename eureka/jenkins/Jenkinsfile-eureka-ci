@@ -41,6 +41,7 @@ pipeline {
         stage('Gitleaks Security Scan') {
             steps {
                 script {
+                    sh 'ls -la'  // Debug: List files to confirm we're in the right directory
                     echo "=========================================="
                     echo "🔍 Running Gitleaks Secret Detection"
                     echo "=========================================="
