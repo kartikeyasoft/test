@@ -171,25 +171,14 @@ pipeline {
                             error "❌ JAR file not found: ${jarFile}"
                         }
                         
-                        echo "🔑 Fetching Nexus credentials from HashiCorp Vault..."
+                        // Call the Shared Library step and pass the specific path
+                        def credentials = fetchVaultSecret('secret/data/nexus')
+                        def nexusUser = credentials.username
+                        def nexusPass = credentials.password
                         
-                        // Direct API call to Vault (no plugin needed)
-                        def vaultResponse = sh(
-                            script: """
-                                curl -s -H "X-Vault-Token: root" \
-                                    http://172.21.12.151:8200/v1/secret/data/nexus
-                            """,
-                            returnStdout: true
-                        ).trim()
-                        
-                        // Parse JSON response
-                        def vaultData = readJSON text: vaultResponse
-                        def nexusUser = vaultData.data.data.username
-                        def nexusPass = vaultData.data.data.password
-                        
-                        echo "✅ Credentials retrieved from Vault"
                         echo "🚀 Uploading artifact to Nexus Repository..."
                         
+                        // Use withCredentials or wrap this to prevent password exposure in logs
                         sh """
                             curl -f -u "${nexusUser}:${nexusPass}" \
                                 --upload-file ${jarFile} \
