@@ -9,8 +9,11 @@
     nexus_url: "{{ lookup('env', 'NEXUS_URL') }}"
 
   tasks:
-
-   
+    - name: Install Java 17
+      apt:
+        name: openjdk-17-jre-headless
+        state: present
+        update_cache: yes   
 
     - name: Create eureka user
       user:
