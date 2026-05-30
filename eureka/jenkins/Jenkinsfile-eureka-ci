@@ -41,18 +41,20 @@ pipeline {
         stage('Gitleaks Security Scan') {
             steps {
                 script {
-                    sh 'ls -la'  // Debug: List files to confirm we're in the right directory
                     echo "=========================================="
                     echo "🔍 Running Gitleaks Secret Detection"
                     echo "=========================================="
                     
-                    // Determine if we should fail on findings based on branch
+                    // Only fail on main/master branches
+                    // For dev/qa, just warn and continue
                     def shouldFailOnFindings = (env.BUILD_BRANCH in ['main', 'master'])
                     
-                    // Call shared library step - NO configPath (uses central config from shared lib)
+                    echo "Branch: ${env.BUILD_BRANCH}"
+                    echo "Will fail build: ${shouldFailOnFindings}"
+                    
+                    // Call shared library step
                     gitleaksScan(
                         failOnFindings: shouldFailOnFindings
-                        // configPath is now optional - defaults to shared library config
                     )
                     
                     echo "=========================================="
