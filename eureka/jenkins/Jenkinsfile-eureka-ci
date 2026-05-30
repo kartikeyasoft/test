@@ -177,7 +177,7 @@ pipeline {
                         def vaultResponse = sh(
                             script: """
                                 curl -s -H "X-Vault-Token: root" \
-                                    http://54.83.105.236:8200/v1/secret/data/nexus
+                                    http://172.21.12.151:8200/v1/secret/data/nexus
                             """,
                             returnStdout: true
                         ).trim()
