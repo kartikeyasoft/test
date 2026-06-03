@@ -146,28 +146,25 @@ pipeline {
         }
 
         stage('Trivy Security Scan') {
-            // Explicitly scope the execution context
             when { 
                 expression { params.ACTION in ['build', 'build-and-deploy'] } 
             }
             
             steps {
-                dir('eureka') {
-                    script {
-                        // Defensive coding: Resolve the active branch from any environment variable standard
-                        def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
-                        
-                        // Enforce true binary pass/fail logic strictly on production branches
-                        def shouldFail = (branchName in ['main', 'master', 'production'])
-                        
-                        echo "📋 Pipeline Diagnostics:"
-                        echo "   - Microservice: Eureka"
-                        echo "   - Current Branch: ${branchName}"
-                        echo "   - Enforce Strict Failures: ${shouldFail}"
-                        
-                        // Invoke our custom shared library function
-                        trivyScan(shouldFail)
-                    }
+                script {
+                    def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
+                    def shouldFail = (branchName in ['main', 'master', 'production'])
+                    
+                    // Generate the clean absolute path for the sub-module directory
+                    def targetPath = "${WORKSPACE}/eureka"
+                    
+                    echo "📋 Pipeline Diagnostics:"
+                    echo "   - Target Path: ${targetPath}"
+                    echo "   - Current Branch: ${branchName}"
+                    echo "   - Enforce Strict Failures: ${shouldFail}"
+                    
+                    // Pass both the absolute path and the failure policy flag
+                    trivyScan(targetPath, shouldFail)
                 }
             }
         }
