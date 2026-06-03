@@ -154,8 +154,6 @@ pipeline {
                 script {
                     def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
                     def shouldFail = (branchName in ['main', 'master', 'production'])
-                    
-                    // Generate the clean absolute path for the sub-module directory
                     def targetPath = "${WORKSPACE}/eureka"
                     
                     echo "📋 Pipeline Diagnostics:"
@@ -163,7 +161,6 @@ pipeline {
                     echo "   - Current Branch: ${branchName}"
                     echo "   - Enforce Strict Failures: ${shouldFail}"
                     
-                    // Pass both the absolute path and the failure policy flag
                     trivyScan(targetPath, shouldFail)
                 }
             }
