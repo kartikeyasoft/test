@@ -151,17 +151,17 @@ pipeline {
             }
             
             steps {
-                // Change workspace context directly to your maven microservice module
                 dir('eureka') {
                     script {
                         def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
                         def shouldFail = (branchName in ['main', 'master', 'production'])
                         
                         echo "📋 Pipeline Diagnostics:"
+                        echo "   - Context Module: eureka"
                         echo "   - Current Branch: ${branchName}"
                         echo "   - Enforce Strict Failures: ${shouldFail}"
                         
-                        // Execute shared library function inside the 'eureka' directory
+                        // Run the variable environment injection function
                         trivyScan(shouldFail)
                     }
                 }
