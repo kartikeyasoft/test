@@ -161,7 +161,6 @@ pipeline {
                         echo "   - Current Branch: ${branchName}"
                         echo "   - Enforce Strict Failures: ${shouldFail}"
                         
-                        // Run the variable environment injection function
                         trivyScan(shouldFail)
                     }
                 }
