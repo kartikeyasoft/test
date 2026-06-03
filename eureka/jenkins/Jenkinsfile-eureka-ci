@@ -168,22 +168,50 @@ pipeline {
             }
         }
 
-        stage('Checkov Security Scan') {
+       stage('Checkov Security Scan') {
             when { 
                 expression { params.ACTION in ['build', 'build-and-deploy'] } 
             }
-            
             steps {
                 script {
                     def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
                     def shouldFail = (branchName in ['main', 'master', 'production'])
                     
-                    echo "📋 Checkov Pipeline Diagnostics:"
-                    echo "   - Scan Target: Root Repository Context (Terraform, Packer, Docker)"
+                    echo "📋 Checkov Diagnostics (Isolated Venv Sandbox Mode):"
                     echo "   - Current Branch: ${branchName}"
                     echo "   - Enforce Strict Failures: ${shouldFail}"
                     
-                    checkovScan(shouldFail)
+                    sh """
+                        #!/bin/bash
+                        set +e
+                        
+                        echo "Creating isolated sandbox for Checkov..."
+                        python3 -m venv checkov_env || virtualenv -p python3 checkov_env
+                        
+                        if [ ! -f "checkov_env/bin/activate" ]; then
+                            echo "❌ Error: Failed to create Python Virtual Environment."
+                            exit 1
+                        fi
+                        
+                        source checkov_env/bin/activate
+                        pip install --upgrade pip > /dev/null
+                        
+                        echo "Installing Checkov inside sandbox..."
+                        pip install checkov
+                        
+                        echo "🔍 Running Checkov Infrastructure Scan..."
+                        if [ "${shouldFail}" = "true" ]; then
+                            checkov --directory . --framework all --compact
+                            SCAN_EXIT_CODE=\$?
+                        else
+                            checkov --directory . --soft-fail --framework all --compact
+                            SCAN_EXIT_CODE=0
+                        fi
+                        
+                        deactivate
+                        rm -rf checkov_env
+                        exit \$SCAN_EXIT_CODE
+                    """
                 }
             }
         }
