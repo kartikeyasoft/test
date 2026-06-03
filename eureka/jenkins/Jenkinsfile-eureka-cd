@@ -241,33 +241,30 @@ pipeline {
                 script {
                     def isProduction = (env.TARGET_ENV == 'prod')
                     
-                    echo "📋 Prowler Audit Diagnostics (Inline Execution):"
+                    echo "📋 Prowler Audit Diagnostics (Dependency Resolution Mode):"
                     echo "   - Environment Type: ${env.TARGET_ENV}"
                     echo "   - Fail Pipeline on Critical Risks: ${isProduction}"
                     
-                    // 1. Check and Install Prowler natively on the agent
+                    // Safe Installation targeting modern Prowler (v4+) to fix Python 3.14 compatibility
                     sh """
                         #!/bin/bash
                         set +e
-                        command -v prowler > /dev/null 2>&1
-                        PROWLER_EXISTS=\$?
                         
-                        if [ \$PROWLER_EXISTS -ne 0 ]; then
-                            echo "⚠️ Prowler not found. Checking for pip3..."
-                            command -v pip3 > /dev/null 2>&1
-                            if [ \$? -ne 0 ]; then
-                                echo "❌ Error: pip3 is required to install Prowler."
-                                exit 1
-                            fi
-                            echo "Installing Prowler via pip3..."
-                            set -e
-                            pip3 install --user prowler --break-system-packages
-                        else
-                            echo "✅ Prowler is already present."
-                        fi
+                        echo "Installing/Upgrading tools to compatible modern dependencies..."
+                        set -e
+                        
+                        # Force install modern prowler, checkov, and their shared dependency framework together
+                        pip3 install --user \
+                            "prowler>=4.0.0" \
+                            "checkov>=3.0.0" \
+                            "pydantic>=2.0.0" \
+                            "boto3>=1.35.0" \
+                            --break-system-packages --upgrade
+                            
+                        echo "✅ Global scanning environment aligned successfully."
                     """
                     
-                    // 2. Run the scan using the correct soft-fail strategy for non-prod branches
+                    // Run the scan with the identical path parameters
                     withEnv(["PATH+EXTRA=${HOME}/.local/bin:${HOME}/bin:/usr/local/bin"]) {
                         if (isProduction) {
                             echo "🔍 Prowler Mode: [PRODUCTION] - Enforcing strict security compliance"
