@@ -145,6 +145,34 @@ pipeline {
             }
         }
 
+        stage('Trivy Security Scan') {
+            when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
+            steps {
+                script {
+                    // Determine if this branch should fail on vulnerabilities
+                    def shouldFail = (env.BUILD_BRANCH in ['main', 'master'])
+                    
+                    echo "=========================================="
+                    echo "🔍 Trivy Vulnerability Scan"
+                    echo "Branch: ${env.BUILD_BRANCH}"
+                    echo "Will fail build: ${shouldFail}"
+                    echo "=========================================="
+                    
+                    dir('eureka') {
+                        trivyScan(shouldFail)
+                    }
+                }
+            }
+            post {
+                failure {
+                    echo "❌ Production build blocked! Fix vulnerabilities in ${env.BUILD_BRANCH}"
+                }
+                success {
+                    echo "✅ Trivy scan completed for ${env.BUILD_BRANCH}"
+                }
+            }
+        }
+
         stage('SonarQube Analysis') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
