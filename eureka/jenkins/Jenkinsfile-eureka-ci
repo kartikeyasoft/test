@@ -205,7 +205,7 @@ pipeline {
                         '''
                         
                         sh '''
-                            packer init eureka.pkr.hcl
+                            packer ini eureka.pkr.hcl
                             
                             packer build \
                                 -var "service_version=${SERVICE_VERSION}" \
