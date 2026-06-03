@@ -141,6 +141,7 @@ pipeline {
             steps {
                 dir('eureka') {
                     sh 'mvn clean package -Dmaven.test.skip=true'
+                    sh 'cat pom.xml'
                 }
             }
         }
