@@ -151,6 +151,7 @@ pipeline {
                 dir('eureka') {
                     script {
                         def shouldFail = (env.BUILD_BRANCH in ['main', 'master'])
+                        echo "Branch: ${env.BUILD_BRANCH} - Fail build: ${shouldFail}"
                         trivyScan(shouldFail)
                     }
                 }
