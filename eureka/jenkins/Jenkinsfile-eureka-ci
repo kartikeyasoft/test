@@ -148,24 +148,11 @@ pipeline {
         stage('Trivy Security Scan') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
-                script {
-                    def shouldFail = (env.BUILD_BRANCH in ['main', 'master'])
-                    
-                    echo "=========================================="
-                    echo "🔍 Trivy Vulnerability Scan"
-                    echo "Branch: ${env.BUILD_BRANCH}"
-                    echo "Will fail build: ${shouldFail}"
-                    echo "=========================================="
-                    
-                    dir('eureka') {
-                        // Pass the parameter correctly
+                dir('eureka') {
+                    script {
+                        def shouldFail = (env.BUILD_BRANCH in ['main', 'master'])
                         trivyScan(shouldFail)
                     }
-                }
-            }
-            post {
-                failure {
-                    echo "❌ Build blocked! Fix vulnerabilities in ${env.BUILD_BRANCH}"
                 }
             }
         }
