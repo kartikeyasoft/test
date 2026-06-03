@@ -167,6 +167,29 @@ pipeline {
             }
         }
 
+        stage('Checkov Security Scan') {
+            // Run when building or deploying
+            when { 
+                expression { params.ACTION in ['build', 'build-and-deploy'] } 
+            }
+            
+            steps {
+                script {
+                    // Identify branch for guardrail tracking
+                    def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
+                    def shouldFail = (branchName in ['main', 'master', 'production'])
+                    
+                    echo "📋 Checkov Pipeline Diagnostics:"
+                    echo "   - Scan Target: Root Repository Context (Terraform, Packer, Docker)"
+                    echo "   - Current Branch: ${branchName}"
+                    echo "   - Enforce Strict Failures: ${shouldFail}"
+                    
+                    // Invoke our custom checkov shared library function
+                    checkovScan(shouldFail)
+                }
+            }
+        }
+
         stage('SonarQube Analysis') {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
