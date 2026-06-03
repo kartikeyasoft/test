@@ -149,7 +149,6 @@ pipeline {
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
             steps {
                 script {
-                    // Determine if this branch should fail on vulnerabilities
                     def shouldFail = (env.BUILD_BRANCH in ['main', 'master'])
                     
                     echo "=========================================="
@@ -159,16 +158,14 @@ pipeline {
                     echo "=========================================="
                     
                     dir('eureka') {
+                        // Pass the parameter correctly
                         trivyScan(shouldFail)
                     }
                 }
             }
             post {
                 failure {
-                    echo "❌ Production build blocked! Fix vulnerabilities in ${env.BUILD_BRANCH}"
-                }
-                success {
-                    echo "✅ Trivy scan completed for ${env.BUILD_BRANCH}"
+                    echo "❌ Build blocked! Fix vulnerabilities in ${env.BUILD_BRANCH}"
                 }
             }
         }
