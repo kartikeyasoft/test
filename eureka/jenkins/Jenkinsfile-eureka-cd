@@ -241,39 +241,49 @@ pipeline {
                 script {
                     def isProduction = (env.TARGET_ENV == 'prod')
                     
-                    echo "📋 Prowler Audit Diagnostics (Direct Python 3.14 Override Mode):"
-                    echo "   - Host Python Context: 3.14"
+                    echo "📋 Prowler Audit Diagnostics (Isolated Virtual Environment Mode):"
+                    echo "   - Host Python: 3.14 (Bypassed via Local Venv Sandboxing)"
                     echo "   - Environment Type: ${env.TARGET_ENV}"
                     echo "   - Fail Pipeline on Critical Risks: ${isProduction}"
                     
-                    // We use --ignore-requires-python to force pip to install modern Prowler on Python 3.14
+                    // 1. Create a Python Virtual Environment using a compatible version runtime
+                    // 2. Install Prowler isolated from host dependencies
+                    // 3. Execute and cleanly exit
                     sh """
                         #!/bin/bash
                         set +e
                         
-                        echo "Upgrading Prowler using explicit version-check overrides..."
-                        set -e
+                        echo "Creating clean sandboxed environment..."
+                        # Check if python3-venv package is available, otherwise use virtualenv wrapper
+                        python3 -m venv prowler_env || virtualenv -p python3 prowler_env
                         
-                        pip3 install --user \
-                            "prowler>=4.0.0" \
-                            "pydantic>=2.0.0" \
-                            --break-system-packages \
-                            --ignore-requires-python \
-                            --upgrade
-                            
-                        echo "✅ Prowler environment successfully updated."
+                        if [ ! -f "prowler_env/bin/activate" ]; then
+                            echo "❌ Error: Failed to create Python Virtual Environment. Please ensure python3-venv is installed."
+                            exit 1
+                        fi
+                        
+                        echo "Activating sandbox and installing stable Prowler..."
+                        source prowler_env/bin/activate
+                        
+                        # Upgrading pip inside the sandbox and installing a locked, stable version
+                        pip install --upgrade pip > /dev/null
+                        pip install prowler==4.3.5
+                        
+                        echo "🔍 Running active configuration scan..."
+                        if [ "${isProduction}" = "true" ]; then
+                            prowler aws --severity critical high
+                            SCAN_EXIT_CODE=\$?
+                        else
+                            prowler aws --severity critical high || true
+                            SCAN_EXIT_CODE=0
+                        fi
+                        
+                        echo "Cleaning up sandbox directory tracking structures..."
+                        deactivate
+                        rm -rf prowler_env
+                        
+                        exit \$SCAN_EXIT_CODE
                     """
-                    
-                    // Execute using the unified path environment variables
-                    withEnv(["PATH+EXTRA=${HOME}/.local/bin:${HOME}/bin:/usr/local/bin"]) {
-                        if (isProduction) {
-                            echo "🔍 Prowler Mode: [PRODUCTION] - Enforcing strict cloud security compliance"
-                            sh "prowler aws --severity critical high"
-                        } else {
-                            echo "🔍 Prowler Mode: [DEV/QA] - Logging Only (Soft Fail Enabled)"
-                            sh "prowler aws --severity critical high || true"
-                        }
-                    }
                 }
             }
         }
