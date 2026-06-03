@@ -151,17 +151,19 @@ pipeline {
             }
             
             steps {
-                script {
-                    def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
-                    def shouldFail = (branchName in ['main', 'master', 'production'])
-                    def targetPath = "${WORKSPACE}/eureka"
-                    
-                    echo "📋 Pipeline Diagnostics:"
-                    echo "   - Target Path: ${targetPath}"
-                    echo "   - Current Branch: ${branchName}"
-                    echo "   - Enforce Strict Failures: ${shouldFail}"
-                    
-                    trivyScan(targetPath, shouldFail)
+                // Change workspace context directly to your maven microservice module
+                dir('eureka') {
+                    script {
+                        def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
+                        def shouldFail = (branchName in ['main', 'master', 'production'])
+                        
+                        echo "📋 Pipeline Diagnostics:"
+                        echo "   - Current Branch: ${branchName}"
+                        echo "   - Enforce Strict Failures: ${shouldFail}"
+                        
+                        // Execute shared library function inside the 'eureka' directory
+                        trivyScan(shouldFail)
+                    }
                 }
             }
         }
