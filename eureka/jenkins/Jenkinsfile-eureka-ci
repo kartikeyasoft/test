@@ -146,19 +146,26 @@ pipeline {
         }
 
         stage('Trivy Security Scan') {
-            // 1. Only run this stage if the action matches
-            when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
+            // Explicitly scope the execution context
+            when { 
+                expression { params.ACTION in ['build', 'build-and-deploy'] } 
+            }
             
             steps {
                 dir('eureka') {
                     script {
-                        // 2. Safely fall back to env.BRANCH_NAME if BUILD_BRANCH isn't set
-                        def currentBranch = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'unknown'
-                        def shouldFail = (currentBranch in ['main', 'master'])
+                        // Defensive coding: Resolve the active branch from any environment variable standard
+                        def branchName = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'dev'
                         
-                        echo "📊 Branch Detected: ${currentBranch} | Production Enforcement: ${shouldFail}"
+                        // Enforce true binary pass/fail logic strictly on production branches
+                        def shouldFail = (branchName in ['main', 'master', 'production'])
                         
-                        // 3. Native Jenkins catchError (Optional but clean alternative)
+                        echo "📋 Pipeline Diagnostics:"
+                        echo "   - Microservice: Eureka"
+                        echo "   - Current Branch: ${branchName}"
+                        echo "   - Enforce Strict Failures: ${shouldFail}"
+                        
+                        // Invoke our custom shared library function
                         trivyScan(shouldFail)
                     }
                 }
