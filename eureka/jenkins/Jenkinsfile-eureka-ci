@@ -146,12 +146,19 @@ pipeline {
         }
 
         stage('Trivy Security Scan') {
+            // 1. Only run this stage if the action matches
             when { expression { params.ACTION in ['build', 'build-and-deploy'] } }
+            
             steps {
                 dir('eureka') {
                     script {
-                        def shouldFail = (env.BUILD_BRANCH in ['main', 'master'])
-                        echo "Branch: ${env.BUILD_BRANCH} - Fail build: ${shouldFail}"
+                        // 2. Safely fall back to env.BRANCH_NAME if BUILD_BRANCH isn't set
+                        def currentBranch = env.BUILD_BRANCH ?: env.BRANCH_NAME ?: 'unknown'
+                        def shouldFail = (currentBranch in ['main', 'master'])
+                        
+                        echo "📊 Branch Detected: ${currentBranch} | Production Enforcement: ${shouldFail}"
+                        
+                        // 3. Native Jenkins catchError (Optional but clean alternative)
                         trivyScan(shouldFail)
                     }
                 }
