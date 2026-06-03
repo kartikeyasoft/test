@@ -241,33 +241,33 @@ pipeline {
                 script {
                     def isProduction = (env.TARGET_ENV == 'prod')
                     
-                    echo "📋 Prowler Audit Diagnostics (Dependency Resolution Mode):"
+                    echo "📋 Prowler Audit Diagnostics (Direct Python 3.14 Override Mode):"
+                    echo "   - Host Python Context: 3.14"
                     echo "   - Environment Type: ${env.TARGET_ENV}"
                     echo "   - Fail Pipeline on Critical Risks: ${isProduction}"
                     
-                    // Safe Installation targeting modern Prowler (v4+) to fix Python 3.14 compatibility
+                    // We use --ignore-requires-python to force pip to install modern Prowler on Python 3.14
                     sh """
                         #!/bin/bash
                         set +e
                         
-                        echo "Installing/Upgrading tools to compatible modern dependencies..."
+                        echo "Upgrading Prowler using explicit version-check overrides..."
                         set -e
                         
-                        # Force install modern prowler, checkov, and their shared dependency framework together
                         pip3 install --user \
                             "prowler>=4.0.0" \
-                            "checkov>=3.0.0" \
                             "pydantic>=2.0.0" \
-                            "boto3>=1.35.0" \
-                            --break-system-packages --upgrade
+                            --break-system-packages \
+                            --ignore-requires-python \
+                            --upgrade
                             
-                        echo "✅ Global scanning environment aligned successfully."
+                        echo "✅ Prowler environment successfully updated."
                     """
                     
-                    // Run the scan with the identical path parameters
+                    // Execute using the unified path environment variables
                     withEnv(["PATH+EXTRA=${HOME}/.local/bin:${HOME}/bin:/usr/local/bin"]) {
                         if (isProduction) {
-                            echo "🔍 Prowler Mode: [PRODUCTION] - Enforcing strict security compliance"
+                            echo "🔍 Prowler Mode: [PRODUCTION] - Enforcing strict cloud security compliance"
                             sh "prowler aws --severity critical high"
                         } else {
                             echo "🔍 Prowler Mode: [DEV/QA] - Logging Only (Soft Fail Enabled)"
