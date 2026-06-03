@@ -235,6 +235,52 @@ pipeline {
             }
         }
 
+        stage('Prowler Cloud Audit') {
+            when { expression { params.ACTION == 'apply' } }
+            steps {
+                script {
+                    def isProduction = (env.TARGET_ENV == 'prod')
+                    
+                    echo "📋 Prowler Audit Diagnostics (Inline Execution):"
+                    echo "   - Environment Type: ${env.TARGET_ENV}"
+                    echo "   - Fail Pipeline on Critical Risks: ${isProduction}"
+                    
+                    // 1. Check and Install Prowler natively on the agent
+                    sh """
+                        #!/bin/bash
+                        set +e
+                        command -v prowler > /dev/null 2>&1
+                        PROWLER_EXISTS=\$?
+                        
+                        if [ \$PROWLER_EXISTS -ne 0 ]; then
+                            echo "⚠️ Prowler not found. Checking for pip3..."
+                            command -v pip3 > /dev/null 2>&1
+                            if [ \$? -ne 0 ]; then
+                                echo "❌ Error: pip3 is required to install Prowler."
+                                exit 1
+                            fi
+                            echo "Installing Prowler via pip3..."
+                            set -e
+                            pip3 install --user prowler --break-system-packages
+                        else
+                            echo "✅ Prowler is already present."
+                        fi
+                    """
+                    
+                    // 2. Run the scan using the correct soft-fail strategy for non-prod branches
+                    withEnv(["PATH+EXTRA=${HOME}/.local/bin:${HOME}/bin:/usr/local/bin"]) {
+                        if (isProduction) {
+                            echo "🔍 Prowler Mode: [PRODUCTION] - Enforcing strict security compliance"
+                            sh "prowler aws --severity critical high"
+                        } else {
+                            echo "🔍 Prowler Mode: [DEV/QA] - Logging Only (Soft Fail Enabled)"
+                            sh "prowler aws --severity critical high || true"
+                        }
+                    }
+                }
+            }
+        }
+
         stage('Store Service Discovery Info') {
             when { expression { params.ACTION == 'apply' } }
             steps {
